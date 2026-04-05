@@ -1,0 +1,11 @@
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\ClashPlugin.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\command\ClashCommand.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\listener\PlayerJoinListener.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\listener\VillageBoundaryListener.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\listener\VillageWorldProtectionListener.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\model\BuildingType.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\model\VillageData.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\BalanceBook.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\RequirementBook.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\VillageManager.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\storage\VillageStore.java

@@ -1,0 +1,14 @@
+name: ClashVillages
+version: 1.0.0
+main: io.lossai.clash.ClashPlugin
+api-version: '1.21'
+author: lossai
+commands:
+  clash:
+    description: Clash villages main command
+    usage: /clash
+    aliases: [coc]
+permissions:
+  clash.admin:
+    description: Allows managing other players in future expansions
+    default: op

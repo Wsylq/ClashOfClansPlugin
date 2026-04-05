@@ -1,0 +1,163 @@
+package io.lossai.clash.command;
+
+import io.lossai.clash.model.BuildingType;
+import io.lossai.clash.model.VillageData;
+import io.lossai.clash.service.VillageManager;
+import org.bukkit.ChatColor;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabCompleter;
+import org.bukkit.entity.Player;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+public final class ClashCommand implements CommandExecutor, TabCompleter {
+
+    private final VillageManager villageManager;
+
+    public ClashCommand(VillageManager villageManager) {
+        this.villageManager = villageManager;
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("Only players can use this command.");
+            return true;
+        }
+
+        if (args.length == 0) {
+            sendHelp(player);
+            return true;
+        }
+
+        String sub = args[0].toLowerCase(Locale.ROOT);
+        switch (sub) {
+            case "tp" -> player.sendMessage(villageManager.teleportToVillage(player));
+            case "village" -> villageManager.describeVillage(player).forEach(player::sendMessage);
+            case "build" -> handleBuild(player, args);
+            case "upgrade" -> handleUpgrade(player, args);
+            default -> sendHelp(player);
+        }
+
+        return true;
+    }
+
+    private void handleBuild(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(ChatColor.RED + "Usage: /clash build <building> [amount]");
+            return;
+        }
+
+        BuildingType type = BuildingType.fromInput(args[1]).orElse(null);
+        if (type == null) {
+            player.sendMessage(ChatColor.RED + "Unknown building. Try: " + String.join(", ", displayBuildingNames()));
+            return;
+        }
+
+        int amount = 1;
+        if (args.length >= 3) {
+            try {
+                amount = Integer.parseInt(args[2]);
+            } catch (NumberFormatException ex) {
+                player.sendMessage(ChatColor.RED + "Amount must be a number.");
+                return;
+            }
+        }
+
+        if (amount <= 0) {
+            player.sendMessage(ChatColor.RED + "Amount must be greater than 0.");
+            return;
+        }
+
+        player.sendMessage(villageManager.build(player, type, amount));
+    }
+
+    private void handleUpgrade(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(ChatColor.RED + "Usage: /clash upgrade <townhall|building>");
+            return;
+        }
+
+        if (args[1].equalsIgnoreCase("townhall")) {
+            player.sendMessage(villageManager.upgradeTownHall(player));
+            return;
+        }
+
+        BuildingType type = BuildingType.fromInput(args[1]).orElse(null);
+        if (type == null) {
+            player.sendMessage(ChatColor.RED + "Unknown upgrade target.");
+            return;
+        }
+
+        player.sendMessage(villageManager.upgradeBuilding(player, type));
+    }
+
+    private void sendHelp(Player player) {
+        player.sendMessage(ChatColor.GOLD + "Clash commands:");
+        player.sendMessage(ChatColor.GRAY + " - /clash tp");
+        player.sendMessage(ChatColor.GRAY + " - /clash village");
+        player.sendMessage(ChatColor.GRAY + " - /clash build <building> [amount]");
+        player.sendMessage(ChatColor.GRAY + " - /clash upgrade townhall");
+        player.sendMessage(ChatColor.GRAY + " - /clash upgrade <building>");
+    }
+
+    private List<String> displayBuildingNames() {
+        List<String> names = new ArrayList<>();
+        for (BuildingType value : BuildingType.values()) {
+            names.add(value.name().toLowerCase(Locale.ROOT));
+        }
+        return names;
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (!(sender instanceof Player player)) {
+            return Collections.emptyList();
+        }
+
+        if (args.length == 1) {
+            return filterByPrefix(List.of("tp", "village", "build", "upgrade"), args[0]);
+        }
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("build")) {
+            VillageData village = villageManager.getVillage(player.getUniqueId());
+            int level = village == null ? 0 : village.getTownHallLevel();
+            Set<BuildingType> allowed = villageManager.getBuildableTypes(level);
+
+            List<String> names = new ArrayList<>();
+            for (BuildingType type : allowed) {
+                names.add(type.name().toLowerCase(Locale.ROOT));
+            }
+
+            return filterByPrefix(names, args[1]);
+        }
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("upgrade")) {
+            List<String> upgradeTargets = new ArrayList<>();
+            upgradeTargets.add("townhall");
+            for (BuildingType type : BuildingType.values()) {
+                upgradeTargets.add(type.name().toLowerCase(Locale.ROOT));
+            }
+            return filterByPrefix(upgradeTargets, args[1]);
+        }
+
+        return Collections.emptyList();
+    }
+
+    private List<String> filterByPrefix(List<String> values, String prefix) {
+        String lowered = prefix.toLowerCase(Locale.ROOT);
+        List<String> matches = new ArrayList<>();
+        for (String value : values) {
+            if (value.startsWith(lowered)) {
+                matches.add(value);
+            }
+        }
+        return matches;
+    }
+}
