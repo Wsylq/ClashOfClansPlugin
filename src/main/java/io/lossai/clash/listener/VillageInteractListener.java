@@ -28,6 +28,7 @@ public final class VillageInteractListener implements Listener {
 
         String message = villageManager.handleVillageInteract(event.getPlayer(), clicked);
         if (message != null && !message.isBlank()) {
+            event.setCancelled(true);
             event.getPlayer().sendMessage(ChatColor.GRAY + message);
         }
     }

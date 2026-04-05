@@ -58,6 +58,12 @@ public final class BalanceBook {
         if (currentLevel <= 0) {
             return null;
         }
+        if (type == BuildingType.WALL) {
+            if (currentLevel >= wallMaxLevel(townHallLevel)) {
+                return null;
+            }
+            return new UpgradeInfo(Currency.GOLD, wallUpgradeCost(currentLevel), 0, currentLevel + 1);
+        }
         if (type == BuildingType.ELIXIR_COLLECTOR && currentLevel == 1 && townHallLevel >= 1) {
             return new UpgradeInfo(Currency.GOLD, 300L, 15, 2);
         }
@@ -81,6 +87,25 @@ public final class BalanceBook {
             case 4 -> 1000;
             case 5, 6 -> 2000;
             default -> 2000;
+        };
+    }
+
+    public static int wallMaxLevel(int townHallLevel) {
+        return switch (Math.max(0, Math.min(2, townHallLevel))) {
+            case 0 -> 2;
+            case 1 -> 4;
+            default -> 6;
+        };
+    }
+
+    public static long wallUpgradeCost(int currentLevel) {
+        return switch (Math.max(1, currentLevel)) {
+            case 1 -> 1_000L;
+            case 2 -> 5_000L;
+            case 3 -> 10_000L;
+            case 4 -> 20_000L;
+            case 5 -> 50_000L;
+            default -> 100_000L;
         };
     }
 }

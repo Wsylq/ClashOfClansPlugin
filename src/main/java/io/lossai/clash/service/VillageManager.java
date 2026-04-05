@@ -9,6 +9,8 @@ import org.bukkit.ChatColor;
 import org.bukkit.GameRule;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Particle;
+import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.WorldBorder;
 import org.bukkit.WorldCreator;
@@ -25,6 +27,13 @@ import org.bukkit.entity.Villager;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.MapMeta;
+import org.bukkit.map.MapCursorCollection;
+import org.bukkit.map.MapRenderer;
+import org.bukkit.map.MapView;
+import org.bukkit.map.MinecraftFont;
+import org.bukkit.map.MapCanvas;
+import org.bukkit.map.MapPalette;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scoreboard.DisplaySlot;
 import org.bukkit.scoreboard.Objective;
@@ -69,6 +78,7 @@ public final class VillageManager {
     private final Map<UUID, Map<String, ConstructionJob>> activeJobs = new HashMap<>();
     private final Map<UUID, List<TrainingJob>> trainingJobs = new HashMap<>();
     private final Map<UUID, ResearchJob> activeResearch = new HashMap<>();
+    private final Map<UUID, Location> overviewReturnLocations = new HashMap<>();
 
     public VillageManager(JavaPlugin plugin, VillageStore store) {
         this.plugin = plugin;
@@ -99,6 +109,8 @@ public final class VillageManager {
             village.setObstaclesGenerated(true);
         }
 
+        enforceResourceCaps(village);
+
         renderVillage(world, village);
         renderAllConstruction(village.getPlayerId(), world);
         updateResourceHud(player, village);
@@ -121,6 +133,9 @@ public final class VillageManager {
         VillageData village = villages.get(player.getUniqueId());
         if (village == null) {
             return ChatColor.RED + "Village not initialized.";
+        }
+        if (type == BuildingType.WALL) {
+            return buildWallInstant(player, village);
         }
         if (availableBuilders(village.getPlayerId(), village) <= 0) {
             return ChatColor.RED + "All builders are busy.";
@@ -172,6 +187,9 @@ public final class VillageManager {
         if (village == null) {
             return ChatColor.RED + "Village not initialized.";
         }
+        if (type == BuildingType.WALL) {
+            return upgradeWallInstant(player, village);
+        }
         if (village.getBuildingCount(type) <= 0) {
             return ChatColor.RED + "You do not own " + type.displayName() + ".";
         }
@@ -207,6 +225,65 @@ public final class VillageManager {
         });
 
         return ChatColor.GREEN + "Started upgrade for " + type.displayName() + ".";
+    }
+
+    private String buildWallInstant(Player player, VillageData village) {
+        int current = village.getBuildingCount(BuildingType.WALL);
+        int max = BalanceBook.maxAtTownHall(BuildingType.WALL, village.getTownHallLevel());
+        if (current >= max) {
+            return ChatColor.RED + "Max reached for wall.";
+        }
+        if (!hasSlot(BuildingType.WALL, current)) {
+            return ChatColor.RED + "No free wall slot available.";
+        }
+        BalanceBook.BuildInfo info = BalanceBook.buildInfo(BuildingType.WALL, current, village.getTownHallLevel());
+        if (!takeCurrency(village, info.currency(), info.cost())) {
+            return ChatColor.RED + "Not enough gold. Need " + info.cost() + ".";
+        }
+
+        village.addBuilding(BuildingType.WALL, 1);
+        village.setWallSegmentLevel(current, 1);
+        World world = getOrCreateVillageWorld(village);
+        if (world != null) {
+            renderVillage(world, village);
+            world.spawnParticle(Particle.BLOCK, new Location(world, slotList(BuildingType.WALL).get(current)[0] + 0.5,
+                    GROUND_Y + 1.2, slotList(BuildingType.WALL).get(current)[1] + 0.5),
+                    14, 0.2, 0.2, 0.2, Material.COBBLESTONE.createBlockData());
+            player.playSound(player.getLocation(), Sound.BLOCK_STONE_PLACE, 0.8f, 1.0f);
+        }
+        updateResourceHud(player, village);
+        store.saveAll(villages);
+        return ChatColor.GREEN + "Wall placed instantly.";
+    }
+
+    private String upgradeWallInstant(Player player, VillageData village) {
+        int slotIndex = village.nextUpgradeableWallIndex();
+        if (slotIndex < 0) {
+            return ChatColor.RED + "Build a wall first.";
+        }
+        int currentLevel = village.getWallSegmentLevel(slotIndex);
+        int maxLevel = BalanceBook.wallMaxLevel(village.getTownHallLevel());
+        if (currentLevel >= maxLevel) {
+            return ChatColor.YELLOW + "All walls are at max level for your Town Hall.";
+        }
+        BalanceBook.UpgradeInfo info = BalanceBook.upgradeInfo(BuildingType.WALL, currentLevel, village.getTownHallLevel());
+        if (info == null || !takeCurrency(village, info.currency(), info.cost())) {
+            long need = info == null ? BalanceBook.wallUpgradeCost(currentLevel) : info.cost();
+            return ChatColor.RED + "Not enough gold. Need " + need + ".";
+        }
+
+        village.setWallSegmentLevel(slotIndex, currentLevel + 1);
+        World world = getOrCreateVillageWorld(village);
+        if (world != null) {
+            int[] slot = slotList(BuildingType.WALL).get(slotIndex);
+            placeWall(world, slot[0], slot[1], currentLevel + 1);
+            world.spawnParticle(Particle.BLOCK, new Location(world, slot[0] + 0.5, GROUND_Y + 1.2, slot[1] + 0.5),
+                    18, 0.2, 0.2, 0.2, wallMaterial(currentLevel + 1).createBlockData());
+            player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_USE, 0.7f, 1.6f);
+        }
+        updateResourceHud(player, village);
+        store.saveAll(villages);
+        return ChatColor.GREEN + "Wall upgraded to level " + (currentLevel + 1) + " instantly.";
     }
 
     public String upgradeTownHall(Player player) {
@@ -249,9 +326,44 @@ public final class VillageManager {
         }
         renderVillage(world, village);
         renderAllConstruction(village.getPlayerId(), world);
+        enforceResourceCaps(village);
         updateResourceHud(player, village);
         player.teleportAsync(getSafeSpawn(world));
         return ChatColor.GREEN + "Teleported to " + village.getWorldName() + ".";
+    }
+
+    public String openOverview(Player player) {
+        VillageData village = villages.get(player.getUniqueId());
+        if (village == null) {
+            return ChatColor.RED + "Village not initialized.";
+        }
+        World world = getOrCreateVillageWorld(village);
+        if (world == null) {
+            return ChatColor.RED + "Could not load world.";
+        }
+
+        overviewReturnLocations.put(player.getUniqueId(), player.getLocation().clone());
+        Location topDown = new Location(world, 0.5, GROUND_Y + 55.0, 0.5, -180f, 90f);
+        player.teleportAsync(topDown);
+        player.sendMessage(ChatColor.AQUA + "Base overview enabled. Use /clash overview exit to return.");
+        giveOverviewMap(player, world, village);
+        return ChatColor.GREEN + "Overview opened.";
+    }
+
+    public String closeOverview(Player player) {
+        Location returnLocation = overviewReturnLocations.remove(player.getUniqueId());
+        VillageData village = villages.get(player.getUniqueId());
+        if (returnLocation == null) {
+            if (village != null) {
+                World world = Bukkit.getWorld(village.getWorldName());
+                if (world != null) {
+                    player.teleportAsync(getSafeSpawn(world));
+                }
+            }
+            return ChatColor.YELLOW + "Overview was not active.";
+        }
+        player.teleportAsync(returnLocation);
+        return ChatColor.GREEN + "Returned from overview.";
     }
 
     public List<String> describeVillage(Player player) {
@@ -260,6 +372,7 @@ public final class VillageManager {
             return List.of(ChatColor.RED + "Village not initialized.");
         }
         List<String> lines = new ArrayList<>();
+        enforceResourceCaps(village);
         lines.add(ChatColor.AQUA + "Village: " + ChatColor.WHITE + village.getWorldName());
         lines.add(ChatColor.AQUA + "Town Hall: " + ChatColor.WHITE + village.getTownHallLevel());
         lines.add(ChatColor.GOLD + "Gold: " + ChatColor.WHITE + village.getGold() + ChatColor.GRAY + " (stored)");
@@ -456,16 +569,35 @@ public final class VillageManager {
     }
 
     public String collectResources(Player player) {
+        return collectResources(player, null);
+    }
+
+    public String collectResources(Player player, BuildingType sourceType) {
         VillageData village = villages.get(player.getUniqueId());
         if (village == null) {
             return ChatColor.RED + "Village not initialized.";
         }
         long beforeGold = village.getGold();
         long beforeElixir = village.getElixir();
-        village.collectGold(goldStorageCap(village));
-        village.collectElixir(elixirStorageCap(village));
+        if (sourceType == BuildingType.GOLD_MINE) {
+            village.collectGold(goldStorageCap(village));
+        } else if (sourceType == BuildingType.ELIXIR_COLLECTOR) {
+            village.collectElixir(elixirStorageCap(village));
+        } else {
+            village.collectGold(goldStorageCap(village));
+            village.collectElixir(elixirStorageCap(village));
+        }
+        village.clampStoredResources(goldStorageCap(village), elixirStorageCap(village));
         long gainedGold = village.getGold() - beforeGold;
         long gainedElixir = village.getElixir() - beforeElixir;
+        if (gainedGold > 0 || gainedElixir > 0) {
+            World world = Bukkit.getWorld(village.getWorldName());
+            if (world != null) {
+                world.spawnParticle(Particle.HAPPY_VILLAGER, player.getLocation().add(0, 1, 0), 12, 0.35, 0.35, 0.35, 0.0);
+                player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.9f, 1.1f);
+            }
+        }
+        refreshCollectorVisuals(village);
         updateResourceHud(player, village);
         store.saveAll(villages);
         return ChatColor.GREEN + "Collected " + gainedGold + " gold and " + gainedElixir + " elixir.";
@@ -497,7 +629,7 @@ public final class VillageManager {
         }
 
         if (hit.type == BuildingType.GOLD_MINE || hit.type == BuildingType.ELIXIR_COLLECTOR) {
-            String collected = collectResources(player);
+            String collected = collectResources(player, hit.type);
             openBuildingInfo(player, village, hit);
             return collected;
         }
@@ -521,6 +653,13 @@ public final class VillageManager {
 
             village.addPendingGold(goldRate, mineCollectorCap(village, BuildingType.GOLD_MINE));
             village.addPendingElixir(elixirRate, mineCollectorCap(village, BuildingType.ELIXIR_COLLECTOR));
+            village.clampPendingResources(mineCollectorCap(village, BuildingType.GOLD_MINE),
+                    mineCollectorCap(village, BuildingType.ELIXIR_COLLECTOR));
+            long overflow = village.clampStoredResources(goldStorageCap(village), elixirStorageCap(village));
+            if (overflow > 0) {
+                player.sendActionBar(ChatColor.RED + "Storages full: overflow prevented.");
+            }
+            refreshCollectorVisuals(village);
             updateResourceHud(player, village);
             changed = true;
         }
@@ -914,8 +1053,9 @@ public final class VillageManager {
         placeBoundary(world);
         placeTownHall(world, village.getTownHallLevel());
         for (Map.Entry<BuildingType, Integer> entry : village.getBuildingsSnapshot().entrySet()) {
-            placeBuildings(world, entry.getKey(), entry.getValue(), village.getBuildingLevel(entry.getKey()));
+            placeBuildings(world, village, entry.getKey(), entry.getValue(), village.getBuildingLevel(entry.getKey()));
         }
+        refreshCollectorVisuals(village);
     }
 
     private void renderAllConstruction(UUID playerId, World world) {
@@ -1032,7 +1172,7 @@ public final class VillageManager {
         world.getBlockAt(0, y + 2, -2).setType(Material.AIR, false);
     }
 
-    private void placeBuildings(World world, BuildingType type, int count, int level) {
+    private void placeBuildings(World world, VillageData village, BuildingType type, int count, int level) {
         List<int[]> slots = slotList(type);
         int limit = Math.min(count, slots.size());
         for (int i = 0; i < limit; i++) {
@@ -1041,8 +1181,8 @@ public final class VillageManager {
             int z = slot[1];
             switch (type) {
                 case BUILDER_HUT -> placeBuilderHut(world, x, z);
-                case GOLD_MINE -> placeGoldMine(world, x, z, level);
-                case ELIXIR_COLLECTOR -> placeElixirCollector(world, x, z, level);
+                case GOLD_MINE -> placeGoldMine(world, x, z, level, i, village);
+                case ELIXIR_COLLECTOR -> placeElixirCollector(world, x, z, level, i, village);
                 case GOLD_STORAGE -> placeGoldStorage(world, x, z, level);
                 case ELIXIR_STORAGE -> placeElixirStorage(world, x, z, level);
                 case BARRACKS -> placeBarracks(world, x, z);
@@ -1050,7 +1190,7 @@ public final class VillageManager {
                 case LABORATORY -> placeLaboratory(world, x, z);
                 case CANNON -> placeCannon(world, x, z);
                 case ARCHER_TOWER -> placeArcherTower(world, x, z);
-                case WALL -> placeWall(world, x, z);
+                case WALL -> placeWall(world, x, z, village.getWallSegmentLevel(i));
             }
         }
     }
@@ -1062,18 +1202,20 @@ public final class VillageManager {
         fill(world, cx - 2, y + 3, cz - 2, cx + 2, y + 3, cz + 2, Material.SPRUCE_SLAB);
     }
 
-    private void placeGoldMine(World world, int cx, int cz, int level) {
+    private void placeGoldMine(World world, int cx, int cz, int level, int slotIndex, VillageData village) {
         int y = GROUND_Y + 1;
         fill(world, cx - 2, y, cz - 2, cx + 2, y, cz + 2, Material.STONE_BRICKS);
         fill(world, cx - 1, y + 1, cz - 1, cx + 1, y + 2, cz + 1, Material.SMOOTH_STONE);
         world.getBlockAt(cx, y + 2, cz).setType(level >= 2 ? Material.RAW_GOLD_BLOCK : Material.GOLD_BLOCK, false);
+        updateMineFillVisual(world, cx, cz, slotIndex, village);
     }
 
-    private void placeElixirCollector(World world, int cx, int cz, int level) {
+    private void placeElixirCollector(World world, int cx, int cz, int level, int slotIndex, VillageData village) {
         int y = GROUND_Y + 1;
         fill(world, cx - 2, y, cz - 2, cx + 2, y, cz + 2, Material.POLISHED_ANDESITE);
         fill(world, cx - 1, y + 1, cz - 1, cx + 1, y + 2, cz + 1, Material.AMETHYST_BLOCK);
         world.getBlockAt(cx, y + 3, cz).setType(level >= 2 ? Material.PURPLE_STAINED_GLASS : Material.MAGENTA_STAINED_GLASS, false);
+        updateCollectorFillVisual(world, cx, cz, slotIndex, village);
     }
 
     private void placeGoldStorage(World world, int cx, int cz, int level) {
@@ -1130,8 +1272,56 @@ public final class VillageManager {
         fill(world, cx - 1, y + 5, cz - 1, cx + 1, y + 5, cz + 1, Material.SPRUCE_PLANKS);
     }
 
-    private void placeWall(World world, int cx, int cz) {
-        world.getBlockAt(cx, GROUND_Y + 1, cz).setType(Material.COBBLESTONE_WALL, false);
+    private void placeWall(World world, int cx, int cz, int level) {
+        world.getBlockAt(cx, GROUND_Y + 1, cz).setType(wallMaterial(level), false);
+    }
+
+    private Material wallMaterial(int level) {
+        return switch (Math.max(1, level)) {
+            case 1 -> Material.COBBLESTONE_WALL;
+            case 2 -> Material.STONE_BRICK_WALL;
+            case 3 -> Material.MOSSY_STONE_BRICK_WALL;
+            case 4 -> Material.DEEPSLATE_BRICK_WALL;
+            case 5 -> Material.POLISHED_BLACKSTONE_BRICK_WALL;
+            default -> Material.NETHER_BRICK_WALL;
+        };
+    }
+
+    private void refreshCollectorVisuals(VillageData village) {
+        World world = Bukkit.getWorld(village.getWorldName());
+        if (world == null) {
+            return;
+        }
+        int mineCount = Math.min(village.getBuildingCount(BuildingType.GOLD_MINE), slotList(BuildingType.GOLD_MINE).size());
+        for (int i = 0; i < mineCount; i++) {
+            int[] slot = slotList(BuildingType.GOLD_MINE).get(i);
+            updateMineFillVisual(world, slot[0], slot[1], i, village);
+        }
+        int collectorCount = Math.min(village.getBuildingCount(BuildingType.ELIXIR_COLLECTOR), slotList(BuildingType.ELIXIR_COLLECTOR).size());
+        for (int i = 0; i < collectorCount; i++) {
+            int[] slot = slotList(BuildingType.ELIXIR_COLLECTOR).get(i);
+            updateCollectorFillVisual(world, slot[0], slot[1], i, village);
+        }
+    }
+
+    private void updateMineFillVisual(World world, int cx, int cz, int slotIndex, VillageData village) {
+        long totalCap = Math.max(1L, mineCollectorCap(village, BuildingType.GOLD_MINE));
+        int mineCount = Math.max(1, village.getBuildingCount(BuildingType.GOLD_MINE));
+        long perCap = Math.max(1L, totalCap / mineCount);
+        long pendingPerMine = village.getPendingGold() / mineCount;
+        double ratio = Math.min(1.0, (double) pendingPerMine / (double) perCap);
+        Material fill = ratio >= 0.85 ? Material.RAW_GOLD_BLOCK : (ratio >= 0.5 ? Material.GOLD_BLOCK : Material.YELLOW_STAINED_GLASS);
+        world.getBlockAt(cx + 1, GROUND_Y + 3, cz).setType(fill, false);
+    }
+
+    private void updateCollectorFillVisual(World world, int cx, int cz, int slotIndex, VillageData village) {
+        long totalCap = Math.max(1L, mineCollectorCap(village, BuildingType.ELIXIR_COLLECTOR));
+        int collectorCount = Math.max(1, village.getBuildingCount(BuildingType.ELIXIR_COLLECTOR));
+        long perCap = Math.max(1L, totalCap / collectorCount);
+        long pendingPerCollector = village.getPendingElixir() / collectorCount;
+        double ratio = Math.min(1.0, (double) pendingPerCollector / (double) perCap);
+        Material fill = ratio >= 0.85 ? Material.PURPLE_STAINED_GLASS : (ratio >= 0.5 ? Material.MAGENTA_STAINED_GLASS : Material.PINK_STAINED_GLASS);
+        world.getBlockAt(cx - 1, GROUND_Y + 3, cz).setType(fill, false);
     }
 
     private void spawnConstructionVisual(ConstructionJob job, World world) {
@@ -1286,6 +1476,12 @@ public final class VillageManager {
 
     private int availableBuilders(UUID playerId, VillageData village) {
         return Math.max(0, totalBuilders(village) - busyBuilders(playerId));
+    }
+
+    private void enforceResourceCaps(VillageData village) {
+        village.clampPendingResources(mineCollectorCap(village, BuildingType.GOLD_MINE),
+                mineCollectorCap(village, BuildingType.ELIXIR_COLLECTOR));
+        village.clampStoredResources(goldStorageCap(village), elixirStorageCap(village));
     }
 
     private long goldStorageCap(VillageData village) {
@@ -1468,7 +1664,8 @@ public final class VillageManager {
                 int[] slot = slotList(type).get(i);
                 if (Math.abs(location.getX() - slot[0]) <= radius && Math.abs(location.getZ() - slot[1]) <= radius
                         && location.getY() >= GROUND_Y + 1 && location.getY() <= GROUND_Y + 8) {
-                    return new BuildingHit(type, i, village.getBuildingLevel(type), type.displayName());
+                    int level = type == BuildingType.WALL ? village.getWallSegmentLevel(i) : village.getBuildingLevel(type);
+                    return new BuildingHit(type, i, level, type.displayName());
                 }
             }
         }
@@ -1500,6 +1697,28 @@ public final class VillageManager {
         }
 
         player.openInventory(inv);
+    }
+
+    private void giveOverviewMap(Player player, World world, VillageData village) {
+        MapView view = Bukkit.createMap(world);
+        for (MapRenderer renderer : new ArrayList<>(view.getRenderers())) {
+            view.removeRenderer(renderer);
+        }
+        view.setTrackingPosition(false);
+        view.setLocked(true);
+        view.setCenterX(0);
+        view.setCenterZ(0);
+        view.setScale(MapView.Scale.FARTHEST);
+        view.addRenderer(new VillageOverviewRenderer(village));
+
+        ItemStack mapItem = new ItemStack(Material.FILLED_MAP);
+        MapMeta meta = (MapMeta) mapItem.getItemMeta();
+        if (meta != null) {
+            meta.setMapView(view);
+            meta.setDisplayName(ChatColor.AQUA + "Village Overview");
+            mapItem.setItemMeta(meta);
+        }
+        player.getInventory().addItem(mapItem);
     }
 
     private ItemStack infoItem(Material material, String name, List<String> lore) {
@@ -1558,16 +1777,72 @@ public final class VillageManager {
 
     private static List<int[]> createWallSlots() {
         List<int[]> slots = new ArrayList<>();
-        int r = 10;
-        for (int x = -r; x <= r; x += 2) {
+        int r = 12;
+        for (int x = -r; x <= r; x++) {
             slots.add(new int[]{x, -r});
             slots.add(new int[]{x, r});
         }
-        for (int z = -r + 2; z <= r - 2; z += 2) {
+        for (int z = -r + 1; z <= r - 1; z++) {
             slots.add(new int[]{-r, z});
             slots.add(new int[]{r, z});
         }
         return Collections.unmodifiableList(slots);
+    }
+
+    private static final class VillageOverviewRenderer extends MapRenderer {
+        private final VillageData village;
+        private boolean rendered;
+
+        private VillageOverviewRenderer(VillageData village) {
+            this.village = village;
+        }
+
+        @Override
+        public void render(MapView map, MapCanvas canvas, Player player) {
+            if (rendered) {
+                return;
+            }
+            rendered = true;
+            for (int x = 0; x < 128; x++) {
+                for (int y = 0; y < 128; y++) {
+                    canvas.setPixel(x, y, MapPalette.matchColor(java.awt.Color.decode("#6BBF59")));
+                }
+            }
+            drawVillageIcon(canvas, 64, 64, java.awt.Color.decode("#5E3B23")); // Town Hall
+            drawBuiltBuildings(canvas, village, BuildingType.BUILDER_HUT, java.awt.Color.decode("#8B5A2B"));
+            drawBuiltBuildings(canvas, village, BuildingType.GOLD_MINE, java.awt.Color.decode("#E1B12C"));
+            drawBuiltBuildings(canvas, village, BuildingType.ELIXIR_COLLECTOR, java.awt.Color.decode("#D980FA"));
+            drawBuiltBuildings(canvas, village, BuildingType.CANNON, java.awt.Color.decode("#7F8C8D"));
+            drawBuiltBuildings(canvas, village, BuildingType.ARCHER_TOWER, java.awt.Color.decode("#2E86C1"));
+            drawBuiltBuildings(canvas, village, BuildingType.WALL, java.awt.Color.decode("#4B6584"));
+            canvas.drawText(4, 4, MinecraftFont.Font, "TH" + village.getTownHallLevel());
+            canvas.drawText(4, 14, MinecraftFont.Font, "W:" + village.getBuildingCount(BuildingType.WALL));
+            MapCursorCollection cursors = new MapCursorCollection();
+            canvas.setCursors(cursors);
+        }
+
+        private void drawBuiltBuildings(MapCanvas canvas, VillageData village, BuildingType type, java.awt.Color color) {
+            List<int[]> slots = type == BuildingType.WALL ? WALL_SLOTS : BUILDING_SLOTS.getOrDefault(type, List.of());
+            int count = Math.min(village.getBuildingCount(type), slots.size());
+            for (int i = 0; i < count; i++) {
+                int[] slot = slots.get(i);
+                int x = Math.max(0, Math.min(127, 64 + (slot[0] * 2)));
+                int y = Math.max(0, Math.min(127, 64 + (slot[1] * 2)));
+                drawVillageIcon(canvas, x, y, color);
+            }
+        }
+
+        private void drawVillageIcon(MapCanvas canvas, int x, int y, java.awt.Color color) {
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    int px = x + dx;
+                    int py = y + dy;
+                    if (px >= 0 && px < 128 && py >= 0 && py < 128) {
+                        canvas.setPixel(px, py, MapPalette.matchColor(color));
+                    }
+                }
+            }
+        }
     }
 
     private enum JobKind {

@@ -25,7 +25,7 @@ public final class PlayerJoinListener implements Listener {
             villageManager.setupVillageForPlayer(player);
             player.sendMessage(ChatColor.GOLD + "Welcome to your Clash village.");
             player.sendMessage(ChatColor.GRAY + "You were moved to a safe spawn in your flat private village world.");
-            player.sendMessage(ChatColor.GRAY + "Use /clash village, /clash build <building>, /clash upgrade <building>, and /clash upgrade townhall.");
+            player.sendMessage(ChatColor.GRAY + "Use /clash village, /clash build <building>, /clash upgrade <building>, /clash overview, and /clash upgrade townhall.");
         }, 10L);
     }
 }

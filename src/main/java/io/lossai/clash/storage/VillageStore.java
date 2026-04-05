@@ -69,6 +69,11 @@ public final class VillageStore {
                 if (troopLevels != null) {
                     serialized.put("troopLevels", troopLevels.getValues(false));
                 }
+
+                ConfigurationSection wallSegmentLevels = section.getConfigurationSection("wallSegmentLevels");
+                if (wallSegmentLevels != null) {
+                    serialized.put("wallSegmentLevels", wallSegmentLevels.getValues(false));
+                }
             }
             result.put(uuid, VillageData.deserialize(uuid, serialized));
         }

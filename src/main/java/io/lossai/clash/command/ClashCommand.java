@@ -42,6 +42,7 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
             case "build" -> handleBuild(player, args);
             case "upgrade" -> handleUpgrade(player, args);
             case "collect" -> player.sendMessage(villageManager.collectResources(player));
+            case "overview" -> handleOverview(player, args);
             case "train" -> handleTrain(player, args);
             case "research" -> handleResearch(player, args);
             case "finish" -> handleFinish(player, args);
@@ -109,9 +110,18 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.GRAY + " - /clash upgrade townhall");
         player.sendMessage(ChatColor.GRAY + " - /clash upgrade <building>");
         player.sendMessage(ChatColor.GRAY + " - /clash collect");
+        player.sendMessage(ChatColor.GRAY + " - /clash overview [exit]");
         player.sendMessage(ChatColor.GRAY + " - /clash train <troop> [amount]");
         player.sendMessage(ChatColor.GRAY + " - /clash research <troop>");
         player.sendMessage(ChatColor.GRAY + " - /clash finish <building|training|research>");
+    }
+
+    private void handleOverview(Player player, String[] args) {
+        if (args.length >= 2 && args[1].equalsIgnoreCase("exit")) {
+            player.sendMessage(villageManager.closeOverview(player));
+            return;
+        }
+        player.sendMessage(villageManager.openOverview(player));
     }
 
     private void handleTrain(Player player, String[] args) {
@@ -172,7 +182,11 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 1) {
-            return filterByPrefix(List.of("tp", "village", "build", "upgrade", "collect", "train", "research", "finish"), args[0]);
+            return filterByPrefix(List.of("tp", "village", "build", "upgrade", "collect", "overview", "train", "research", "finish"), args[0]);
+        }
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("overview")) {
+            return filterByPrefix(List.of("exit"), args[1]);
         }
 
         if (args.length == 2 && args[0].equalsIgnoreCase("build")) {

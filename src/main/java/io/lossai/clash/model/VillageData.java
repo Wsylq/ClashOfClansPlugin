@@ -24,6 +24,7 @@ public final class VillageData {
     private boolean obstaclesGenerated;
     private final EnumMap<BuildingType, Integer> buildings;
     private final EnumMap<BuildingType, Integer> buildingLevels;
+    private final Map<Integer, Integer> wallSegmentLevels;
     private final EnumMap<TroopType, Integer> troops;
     private final EnumMap<TroopType, Integer> troopLevels;
 
@@ -45,6 +46,7 @@ public final class VillageData {
         this.obstaclesGenerated = obstaclesGenerated;
         this.buildings = new EnumMap<>(BuildingType.class);
         this.buildingLevels = new EnumMap<>(BuildingType.class);
+        this.wallSegmentLevels = new HashMap<>();
         this.troops = new EnumMap<>(TroopType.class);
         this.troopLevels = new EnumMap<>(TroopType.class);
         if (buildings != null) {
@@ -221,6 +223,47 @@ public final class VillageData {
         return true;
     }
 
+    public long clampStoredResources(long goldCap, long elixirCap) {
+        long oldGold = gold;
+        long oldElixir = elixir;
+        gold = Math.max(0L, Math.min(gold, Math.max(0L, goldCap)));
+        elixir = Math.max(0L, Math.min(elixir, Math.max(0L, elixirCap)));
+        return (oldGold - gold) + (oldElixir - elixir);
+    }
+
+    public void clampPendingResources(long pendingGoldCap, long pendingElixirCap) {
+        pendingGold = Math.max(0L, Math.min(pendingGold, Math.max(0L, pendingGoldCap)));
+        pendingElixir = Math.max(0L, Math.min(pendingElixir, Math.max(0L, pendingElixirCap)));
+    }
+
+    public int getWallSegmentLevel(int index) {
+        return wallSegmentLevels.getOrDefault(index, 1);
+    }
+
+    public void setWallSegmentLevel(int index, int level) {
+        if (index < 0) {
+            return;
+        }
+        wallSegmentLevels.put(index, Math.max(1, level));
+    }
+
+    public int nextUpgradeableWallIndex() {
+        int built = getBuildingCount(BuildingType.WALL);
+        if (built <= 0) {
+            return -1;
+        }
+        int selected = -1;
+        int selectedLevel = Integer.MAX_VALUE;
+        for (int i = 0; i < built; i++) {
+            int level = getWallSegmentLevel(i);
+            if (level < selectedLevel) {
+                selectedLevel = level;
+                selected = i;
+            }
+        }
+        return selected;
+    }
+
     public int getTroopCount(TroopType type) {
         return troops.getOrDefault(type, 0);
     }
@@ -319,6 +362,12 @@ public final class VillageData {
         }
         data.put("buildingLevels", serializedBuildingLevels);
 
+        Map<String, Integer> serializedWallLevels = new HashMap<>();
+        for (Map.Entry<Integer, Integer> entry : wallSegmentLevels.entrySet()) {
+            serializedWallLevels.put(String.valueOf(entry.getKey()), entry.getValue());
+        }
+        data.put("wallSegmentLevels", serializedWallLevels);
+
         Map<String, Integer> serializedTroops = new HashMap<>();
         for (Map.Entry<TroopType, Integer> entry : troops.entrySet()) {
             serializedTroops.put(entry.getKey().name().toLowerCase(Locale.ROOT), entry.getValue());
@@ -401,7 +450,26 @@ public final class VillageData {
             }
         }
 
-        return new VillageData(playerId, playerName, worldName, townHallLevel, gold, elixir, gems, pendingGold,
+        Map<Integer, Integer> wallLevels = new HashMap<>();
+        Object wallLevelObj = rawData.get("wallSegmentLevels");
+        if (wallLevelObj instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                try {
+                    int slotIndex = Integer.parseInt(String.valueOf(entry.getKey()));
+                    if (slotIndex >= 0 && entry.getValue() instanceof Number n && n.intValue() > 0) {
+                        wallLevels.put(slotIndex, n.intValue());
+                    }
+                } catch (NumberFormatException ignored) {
+                    // Ignore malformed keys in persisted data.
+                }
+            }
+        }
+
+        VillageData data = new VillageData(playerId, playerName, worldName, townHallLevel, gold, elixir, gems, pendingGold,
                 pendingElixir, starterGenerated, obstaclesGenerated, buildings, buildingLevels, troops, troopLevels);
+        for (Map.Entry<Integer, Integer> entry : wallLevels.entrySet()) {
+            data.setWallSegmentLevel(entry.getKey(), entry.getValue());
+        }
+        return data;
     }
 }

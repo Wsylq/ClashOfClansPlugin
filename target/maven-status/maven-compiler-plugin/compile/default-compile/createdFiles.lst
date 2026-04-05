@@ -23,6 +23,7 @@ io\lossai\clash\model\TroopType.class
 io\lossai\clash\model\BuildingType.class
 io\lossai\clash\service\BalanceBook$1.class
 io\lossai\clash\service\VillageManager$BuildingHit.class
+io\lossai\clash\service\VillageManager$VillageOverviewRenderer.class
 io\lossai\clash\storage\VillageStore.class
 io\lossai\clash\service\VillageManager$TrainingJob.class
 io\lossai\clash\service\TroopBook$TroopInfo.class
