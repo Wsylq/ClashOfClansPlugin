@@ -59,6 +59,16 @@ public final class VillageStore {
                 if (buildingLevels != null) {
                     serialized.put("buildingLevels", buildingLevels.getValues(false));
                 }
+
+                ConfigurationSection troops = section.getConfigurationSection("troops");
+                if (troops != null) {
+                    serialized.put("troops", troops.getValues(false));
+                }
+
+                ConfigurationSection troopLevels = section.getConfigurationSection("troopLevels");
+                if (troopLevels != null) {
+                    serialized.put("troopLevels", troopLevels.getValues(false));
+                }
             }
             result.put(uuid, VillageData.deserialize(uuid, serialized));
         }

@@ -2,7 +2,9 @@ package io.lossai.clash;
 
 import io.lossai.clash.command.ClashCommand;
 import io.lossai.clash.listener.PlayerJoinListener;
+import io.lossai.clash.listener.InfoInventoryListener;
 import io.lossai.clash.listener.VillageBoundaryListener;
+import io.lossai.clash.listener.VillageInteractListener;
 import io.lossai.clash.listener.VillageWorldProtectionListener;
 import io.lossai.clash.service.VillageManager;
 import io.lossai.clash.storage.VillageStore;
@@ -22,6 +24,8 @@ public final class ClashPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new PlayerJoinListener(this, villageManager), this);
         getServer().getPluginManager().registerEvents(new VillageWorldProtectionListener(villageManager), this);
         getServer().getPluginManager().registerEvents(new VillageBoundaryListener(villageManager), this);
+        getServer().getPluginManager().registerEvents(new VillageInteractListener(villageManager), this);
+        getServer().getPluginManager().registerEvents(new InfoInventoryListener(), this);
 
         PluginCommand clashCommand = getCommand("clash");
         if (clashCommand == null) {

@@ -18,14 +18,20 @@ public final class VillageData {
     private long gold;
     private long elixir;
     private long gems;
+    private long pendingGold;
+    private long pendingElixir;
     private boolean starterGenerated;
     private boolean obstaclesGenerated;
     private final EnumMap<BuildingType, Integer> buildings;
     private final EnumMap<BuildingType, Integer> buildingLevels;
+    private final EnumMap<TroopType, Integer> troops;
+    private final EnumMap<TroopType, Integer> troopLevels;
 
     public VillageData(UUID playerId, String playerName, String worldName, int townHallLevel, long gold, long elixir,
-                       long gems, boolean starterGenerated, boolean obstaclesGenerated, Map<BuildingType, Integer> buildings,
-                       Map<BuildingType, Integer> buildingLevels) {
+                       long gems, long pendingGold, long pendingElixir, boolean starterGenerated,
+                       boolean obstaclesGenerated, Map<BuildingType, Integer> buildings,
+                       Map<BuildingType, Integer> buildingLevels, Map<TroopType, Integer> troops,
+                       Map<TroopType, Integer> troopLevels) {
         this.playerId = playerId;
         this.playerName = playerName;
         this.worldName = worldName;
@@ -33,22 +39,34 @@ public final class VillageData {
         this.gold = Math.max(0L, gold);
         this.elixir = Math.max(0L, elixir);
         this.gems = Math.max(0L, gems);
+        this.pendingGold = Math.max(0L, pendingGold);
+        this.pendingElixir = Math.max(0L, pendingElixir);
         this.starterGenerated = starterGenerated;
         this.obstaclesGenerated = obstaclesGenerated;
         this.buildings = new EnumMap<>(BuildingType.class);
         this.buildingLevels = new EnumMap<>(BuildingType.class);
+        this.troops = new EnumMap<>(TroopType.class);
+        this.troopLevels = new EnumMap<>(TroopType.class);
         if (buildings != null) {
             this.buildings.putAll(buildings);
         }
         if (buildingLevels != null) {
             this.buildingLevels.putAll(buildingLevels);
         }
+        if (troops != null) {
+            this.troops.putAll(troops);
+        }
+        if (troopLevels != null) {
+            this.troopLevels.putAll(troopLevels);
+        }
 
-        // Keep data coherent if a building exists but no level was saved yet.
         for (Map.Entry<BuildingType, Integer> entry : this.buildings.entrySet()) {
             if (entry.getValue() > 0 && this.buildingLevels.getOrDefault(entry.getKey(), 0) <= 0) {
                 this.buildingLevels.put(entry.getKey(), 1);
             }
+        }
+        for (TroopType type : TroopType.values()) {
+            this.troopLevels.putIfAbsent(type, 1);
         }
     }
 
@@ -84,29 +102,55 @@ public final class VillageData {
         return gold;
     }
 
-    public void addGold(long amount) {
-        if (amount > 0) {
-            this.gold += amount;
-        }
-    }
-
     public long getElixir() {
         return elixir;
-    }
-
-    public void addElixir(long amount) {
-        if (amount > 0) {
-            this.elixir += amount;
-        }
     }
 
     public long getGems() {
         return gems;
     }
 
+    public long getPendingGold() {
+        return pendingGold;
+    }
+
+    public long getPendingElixir() {
+        return pendingElixir;
+    }
+
+    public void addPendingGold(long amount, long cap) {
+        if (amount <= 0) {
+            return;
+        }
+        pendingGold = Math.min(Math.max(0L, cap), pendingGold + amount);
+    }
+
+    public void addPendingElixir(long amount, long cap) {
+        if (amount <= 0) {
+            return;
+        }
+        pendingElixir = Math.min(Math.max(0L, cap), pendingElixir + amount);
+    }
+
+    public long collectGold(long storageCap) {
+        long space = Math.max(0L, storageCap - gold);
+        long moved = Math.min(space, pendingGold);
+        gold += moved;
+        pendingGold -= moved;
+        return moved;
+    }
+
+    public long collectElixir(long storageCap) {
+        long space = Math.max(0L, storageCap - elixir);
+        long moved = Math.min(space, pendingElixir);
+        elixir += moved;
+        pendingElixir -= moved;
+        return moved;
+    }
+
     public void addGems(long amount) {
         if (amount > 0) {
-            this.gems += amount;
+            gems += amount;
         }
     }
 
@@ -114,7 +158,6 @@ public final class VillageData {
         if (amount <= 0 || gems < amount) {
             return false;
         }
-
         gems -= amount;
         return true;
     }
@@ -123,7 +166,6 @@ public final class VillageData {
         if (amount <= 0 || gold < amount) {
             return false;
         }
-
         gold -= amount;
         return true;
     }
@@ -132,7 +174,6 @@ public final class VillageData {
         if (amount <= 0 || elixir < amount) {
             return false;
         }
-
         elixir -= amount;
         return true;
     }
@@ -161,7 +202,6 @@ public final class VillageData {
         if (amount <= 0) {
             return;
         }
-
         int current = buildings.getOrDefault(type, 0);
         buildings.put(type, current + amount);
         if (current + amount > 0 && buildingLevels.getOrDefault(type, 0) <= 0) {
@@ -173,17 +213,50 @@ public final class VillageData {
         return buildingLevels.getOrDefault(type, 0);
     }
 
-    public boolean hasBuildingLevel(BuildingType type, int level) {
-        return getBuildingCount(type) > 0 && getBuildingLevel(type) >= level;
-    }
-
     public boolean setBuildingLevel(BuildingType type, int newLevel) {
         if (newLevel <= 0 || getBuildingCount(type) <= 0) {
             return false;
         }
-
         buildingLevels.put(type, newLevel);
         return true;
+    }
+
+    public int getTroopCount(TroopType type) {
+        return troops.getOrDefault(type, 0);
+    }
+
+    public void addTroops(TroopType type, int amount) {
+        if (amount <= 0) {
+            return;
+        }
+        troops.put(type, getTroopCount(type) + amount);
+    }
+
+    public boolean takeTroops(TroopType type, int amount) {
+        int have = getTroopCount(type);
+        if (amount <= 0 || have < amount) {
+            return false;
+        }
+        troops.put(type, have - amount);
+        return true;
+    }
+
+    public int getTroopLevel(TroopType type) {
+        return troopLevels.getOrDefault(type, 1);
+    }
+
+    public void setTroopLevel(TroopType type, int level) {
+        if (level > 0) {
+            troopLevels.put(type, level);
+        }
+    }
+
+    public Map<BuildingType, Integer> getBuildingsSnapshot() {
+        return Collections.unmodifiableMap(buildings);
+    }
+
+    public Map<TroopType, Integer> getTroopsSnapshot() {
+        return Collections.unmodifiableMap(troops);
     }
 
     public boolean meetsRequirements(Map<BuildingType, Integer> requirements) {
@@ -192,7 +265,6 @@ public final class VillageData {
                 return false;
             }
         }
-
         return true;
     }
 
@@ -201,11 +273,9 @@ public final class VillageData {
         for (Map.Entry<BuildingType, Integer> entry : requirements.entrySet()) {
             int have = getBuildingCount(entry.getKey());
             if (have < entry.getValue()) {
-                int left = entry.getValue() - have;
-                missing.add(left + "x " + entry.getKey().displayName());
+                missing.add((entry.getValue() - have) + "x " + entry.getKey().displayName());
             }
         }
-
         return missing;
     }
 
@@ -224,64 +294,76 @@ public final class VillageData {
         return missingLevelRequirements(levelRequirements).isEmpty();
     }
 
-    public Map<BuildingType, Integer> getBuildingsSnapshot() {
-        return Collections.unmodifiableMap(buildings);
-    }
-
     public Map<String, Object> serialize() {
         Map<String, Object> data = new HashMap<>();
         data.put("playerName", playerName);
         data.put("worldName", worldName);
         data.put("townHallLevel", townHallLevel);
+        data.put("gold", gold);
+        data.put("elixir", elixir);
+        data.put("gems", gems);
+        data.put("pendingGold", pendingGold);
+        data.put("pendingElixir", pendingElixir);
+        data.put("starterGenerated", starterGenerated);
+        data.put("obstaclesGenerated", obstaclesGenerated);
 
         Map<String, Integer> serializedBuildings = new HashMap<>();
         for (Map.Entry<BuildingType, Integer> entry : buildings.entrySet()) {
             serializedBuildings.put(entry.getKey().name().toLowerCase(Locale.ROOT), entry.getValue());
         }
-
         data.put("buildings", serializedBuildings);
-        Map<String, Integer> serializedLevels = new HashMap<>();
+
+        Map<String, Integer> serializedBuildingLevels = new HashMap<>();
         for (Map.Entry<BuildingType, Integer> entry : buildingLevels.entrySet()) {
-            serializedLevels.put(entry.getKey().name().toLowerCase(Locale.ROOT), entry.getValue());
+            serializedBuildingLevels.put(entry.getKey().name().toLowerCase(Locale.ROOT), entry.getValue());
         }
-        data.put("buildingLevels", serializedLevels);
-        data.put("gold", gold);
-        data.put("elixir", elixir);
-        data.put("gems", gems);
-        data.put("starterGenerated", starterGenerated);
-        data.put("obstaclesGenerated", obstaclesGenerated);
+        data.put("buildingLevels", serializedBuildingLevels);
+
+        Map<String, Integer> serializedTroops = new HashMap<>();
+        for (Map.Entry<TroopType, Integer> entry : troops.entrySet()) {
+            serializedTroops.put(entry.getKey().name().toLowerCase(Locale.ROOT), entry.getValue());
+        }
+        data.put("troops", serializedTroops);
+
+        Map<String, Integer> serializedTroopLevels = new HashMap<>();
+        for (Map.Entry<TroopType, Integer> entry : troopLevels.entrySet()) {
+            serializedTroopLevels.put(entry.getKey().name().toLowerCase(Locale.ROOT), entry.getValue());
+        }
+        data.put("troopLevels", serializedTroopLevels);
         return data;
     }
 
     @SuppressWarnings("unchecked")
     public static VillageData deserialize(UUID playerId, Map<String, Object> rawData) {
         if (rawData == null) {
-            return new VillageData(playerId, "unknown", null, 0, 0L, 0L, 0L, false, false,
-                    new EnumMap<>(BuildingType.class), new EnumMap<>(BuildingType.class));
+            return new VillageData(playerId, "unknown", null, 0, 0L, 0L, 0L, 0L, 0L,
+                    false, false, new EnumMap<>(BuildingType.class), new EnumMap<>(BuildingType.class),
+                    new EnumMap<>(TroopType.class), new EnumMap<>(TroopType.class));
         }
 
         String playerName = String.valueOf(rawData.getOrDefault("playerName", "unknown"));
         String worldName = (String) rawData.get("worldName");
-        int townHallLevel = (rawData.get("townHallLevel") instanceof Number number) ? number.intValue() : 0;
-        long gold = (rawData.get("gold") instanceof Number number) ? Math.max(0L, number.longValue()) : 0L;
-        long elixir = (rawData.get("elixir") instanceof Number number) ? Math.max(0L, number.longValue()) : 0L;
-        long gems = (rawData.get("gems") instanceof Number number) ? Math.max(0L, number.longValue()) : 0L;
+        int townHallLevel = (rawData.get("townHallLevel") instanceof Number n) ? n.intValue() : 0;
+        long gold = (rawData.get("gold") instanceof Number n) ? Math.max(0L, n.longValue()) : 0L;
+        long elixir = (rawData.get("elixir") instanceof Number n) ? Math.max(0L, n.longValue()) : 0L;
+        long gems = (rawData.get("gems") instanceof Number n) ? Math.max(0L, n.longValue()) : 0L;
+        long pendingGold = (rawData.get("pendingGold") instanceof Number n) ? Math.max(0L, n.longValue()) : 0L;
+        long pendingElixir = (rawData.get("pendingElixir") instanceof Number n) ? Math.max(0L, n.longValue()) : 0L;
         boolean starterGenerated = Boolean.TRUE.equals(rawData.get("starterGenerated"));
         boolean obstaclesGenerated = Boolean.TRUE.equals(rawData.get("obstaclesGenerated"));
 
         EnumMap<BuildingType, Integer> buildings = new EnumMap<>(BuildingType.class);
         EnumMap<BuildingType, Integer> buildingLevels = new EnumMap<>(BuildingType.class);
+        EnumMap<TroopType, Integer> troops = new EnumMap<>(TroopType.class);
+        EnumMap<TroopType, Integer> troopLevels = new EnumMap<>(TroopType.class);
+
         Object buildingObj = rawData.get("buildings");
         if (buildingObj instanceof Map<?, ?> map) {
             for (Map.Entry<?, ?> entry : map.entrySet()) {
                 BuildingType.fromInput(String.valueOf(entry.getKey())).ifPresent(type -> {
-                    int amount = 0;
-                    Object value = entry.getValue();
-                    if (value instanceof Number number) {
-                        amount = Math.max(0, number.intValue());
+                    if (entry.getValue() instanceof Number n) {
+                        buildings.put(type, Math.max(0, n.intValue()));
                     }
-
-                    buildings.put(type, amount);
                 });
             }
         }
@@ -290,19 +372,36 @@ public final class VillageData {
         if (levelObj instanceof Map<?, ?> map) {
             for (Map.Entry<?, ?> entry : map.entrySet()) {
                 BuildingType.fromInput(String.valueOf(entry.getKey())).ifPresent(type -> {
-                    int level = 0;
-                    Object value = entry.getValue();
-                    if (value instanceof Number number) {
-                        level = Math.max(0, number.intValue());
-                    }
-                    if (level > 0) {
-                        buildingLevels.put(type, level);
+                    if (entry.getValue() instanceof Number n && n.intValue() > 0) {
+                        buildingLevels.put(type, n.intValue());
                     }
                 });
             }
         }
 
-        return new VillageData(playerId, playerName, worldName, townHallLevel, gold, elixir, gems,
-                starterGenerated, obstaclesGenerated, buildings, buildingLevels);
+        Object troopObj = rawData.get("troops");
+        if (troopObj instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                TroopType.fromInput(String.valueOf(entry.getKey())).ifPresent(type -> {
+                    if (entry.getValue() instanceof Number n) {
+                        troops.put(type, Math.max(0, n.intValue()));
+                    }
+                });
+            }
+        }
+
+        Object troopLevelObj = rawData.get("troopLevels");
+        if (troopLevelObj instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                TroopType.fromInput(String.valueOf(entry.getKey())).ifPresent(type -> {
+                    if (entry.getValue() instanceof Number n && n.intValue() > 0) {
+                        troopLevels.put(type, n.intValue());
+                    }
+                });
+            }
+        }
+
+        return new VillageData(playerId, playerName, worldName, townHallLevel, gold, elixir, gems, pendingGold,
+                pendingElixir, starterGenerated, obstaclesGenerated, buildings, buildingLevels, troops, troopLevels);
     }
 }

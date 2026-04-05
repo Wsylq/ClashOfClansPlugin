@@ -1,7 +1,7 @@
 package io.lossai.clash.command;
 
 import io.lossai.clash.model.BuildingType;
-import io.lossai.clash.model.VillageData;
+import io.lossai.clash.model.TroopType;
 import io.lossai.clash.service.VillageManager;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
@@ -14,7 +14,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 
 public final class ClashCommand implements CommandExecutor, TabCompleter {
 
@@ -42,6 +41,10 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
             case "village" -> villageManager.describeVillage(player).forEach(player::sendMessage);
             case "build" -> handleBuild(player, args);
             case "upgrade" -> handleUpgrade(player, args);
+            case "collect" -> player.sendMessage(villageManager.collectResources(player));
+            case "train" -> handleTrain(player, args);
+            case "research" -> handleResearch(player, args);
+            case "finish" -> handleFinish(player, args);
             default -> sendHelp(player);
         }
 
@@ -105,6 +108,53 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.GRAY + " - /clash build <building> [amount]");
         player.sendMessage(ChatColor.GRAY + " - /clash upgrade townhall");
         player.sendMessage(ChatColor.GRAY + " - /clash upgrade <building>");
+        player.sendMessage(ChatColor.GRAY + " - /clash collect");
+        player.sendMessage(ChatColor.GRAY + " - /clash train <troop> [amount]");
+        player.sendMessage(ChatColor.GRAY + " - /clash research <troop>");
+        player.sendMessage(ChatColor.GRAY + " - /clash finish <building|training|research>");
+    }
+
+    private void handleTrain(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(ChatColor.RED + "Usage: /clash train <troop> [amount]");
+            return;
+        }
+        TroopType type = TroopType.fromInput(args[1]).orElse(null);
+        if (type == null) {
+            player.sendMessage(ChatColor.RED + "Unknown troop.");
+            return;
+        }
+        int amount = 1;
+        if (args.length >= 3) {
+            try {
+                amount = Integer.parseInt(args[2]);
+            } catch (NumberFormatException ex) {
+                player.sendMessage(ChatColor.RED + "Amount must be a number.");
+                return;
+            }
+        }
+        player.sendMessage(villageManager.trainTroop(player, type, amount));
+    }
+
+    private void handleResearch(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(ChatColor.RED + "Usage: /clash research <troop>");
+            return;
+        }
+        TroopType type = TroopType.fromInput(args[1]).orElse(null);
+        if (type == null) {
+            player.sendMessage(ChatColor.RED + "Unknown troop.");
+            return;
+        }
+        player.sendMessage(villageManager.startResearch(player, type));
+    }
+
+    private void handleFinish(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(ChatColor.RED + "Usage: /clash finish <building|training|research>");
+            return;
+        }
+        player.sendMessage(villageManager.finishNow(player, args[1]));
     }
 
     private List<String> displayBuildingNames() {
@@ -122,20 +172,11 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 1) {
-            return filterByPrefix(List.of("tp", "village", "build", "upgrade"), args[0]);
+            return filterByPrefix(List.of("tp", "village", "build", "upgrade", "collect", "train", "research", "finish"), args[0]);
         }
 
         if (args.length == 2 && args[0].equalsIgnoreCase("build")) {
-            VillageData village = villageManager.getVillage(player.getUniqueId());
-            int level = village == null ? 0 : village.getTownHallLevel();
-            Set<BuildingType> allowed = villageManager.getBuildableTypes(level);
-
-            List<String> names = new ArrayList<>();
-            for (BuildingType type : allowed) {
-                names.add(type.name().toLowerCase(Locale.ROOT));
-            }
-
-            return filterByPrefix(names, args[1]);
+            return filterByPrefix(villageManager.getBuildTabSuggestions(player), args[1]);
         }
 
         if (args.length == 2 && args[0].equalsIgnoreCase("upgrade")) {
@@ -145,6 +186,32 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
                 upgradeTargets.add(type.name().toLowerCase(Locale.ROOT));
             }
             return filterByPrefix(upgradeTargets, args[1]);
+        }
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("train")) {
+            List<String> troops = new ArrayList<>();
+            for (TroopType type : TroopType.values()) {
+                troops.add(type.name().toLowerCase(Locale.ROOT));
+            }
+            return filterByPrefix(troops, args[1]);
+        }
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("research")) {
+            List<String> troops = new ArrayList<>();
+            for (TroopType type : TroopType.values()) {
+                troops.add(type.name().toLowerCase(Locale.ROOT));
+            }
+            return filterByPrefix(troops, args[1]);
+        }
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("finish")) {
+            List<String> finishTargets = new ArrayList<>();
+            finishTargets.add("training");
+            finishTargets.add("research");
+            for (BuildingType type : BuildingType.values()) {
+                finishTargets.add(type.name().toLowerCase(Locale.ROOT));
+            }
+            return filterByPrefix(finishTargets, args[1]);
         }
 
         return Collections.emptyList();

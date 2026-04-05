@@ -1,6 +1,7 @@
 package io.lossai.clash.service;
 
 import io.lossai.clash.model.BuildingType;
+import io.lossai.clash.model.TroopType;
 import io.lossai.clash.model.VillageData;
 import io.lossai.clash.storage.VillageStore;
 import org.bukkit.Bukkit;
@@ -21,6 +22,9 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Monster;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scoreboard.DisplaySlot;
 import org.bukkit.scoreboard.Objective;
@@ -28,6 +32,7 @@ import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.scoreboard.ScoreboardManager;
 import org.bukkit.util.Vector;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -35,7 +40,9 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
@@ -46,12 +53,22 @@ public final class VillageManager {
     private static final int GROUND_Y = 64;
     private static final int PLAYABLE_RADIUS = 34;
     private static final int SCENERY_RADIUS = 56;
+    private static final int ARMY_CAP_PER_CAMP = 20;
+
+    private static final Set<Material> OBSTACLE_BLOCKS = EnumSet.of(
+            Material.OAK_LOG, Material.OAK_LEAVES, Material.AZALEA_LEAVES,
+            Material.FLOWERING_AZALEA_LEAVES, Material.COBBLESTONE, Material.MOSSY_COBBLESTONE, Material.STONE
+    );
+
     private static final Map<BuildingType, List<int[]>> BUILDING_SLOTS = createBuildingSlots();
+    private static final List<int[]> WALL_SLOTS = createWallSlots();
 
     private final JavaPlugin plugin;
     private final VillageStore store;
     private final Map<UUID, VillageData> villages;
-    private final Map<UUID, Map<JobKey, ConstructionJob>> activeJobs = new HashMap<>();
+    private final Map<UUID, Map<String, ConstructionJob>> activeJobs = new HashMap<>();
+    private final Map<UUID, List<TrainingJob>> trainingJobs = new HashMap<>();
+    private final Map<UUID, ResearchJob> activeResearch = new HashMap<>();
 
     public VillageManager(JavaPlugin plugin, VillageStore store) {
         this.plugin = plugin;
@@ -60,34 +77,32 @@ public final class VillageManager {
     }
 
     public void setupVillageForPlayer(Player player) {
-        VillageData village = villages.get(player.getUniqueId());
-        if (village == null) {
-            village = new VillageData(player.getUniqueId(), player.getName(), null, 0,
-                    1000L, 1000L, 500L, false, false, Collections.emptyMap(), Collections.emptyMap());
-            villages.put(player.getUniqueId(), village);
-        }
+        VillageData village = villages.computeIfAbsent(player.getUniqueId(),
+                id -> new VillageData(id, player.getName(), null, 0, 1000L, 1000L, 500L,
+                        0L, 0L, false, false, Collections.emptyMap(), Collections.emptyMap(),
+                        Collections.emptyMap(), Collections.emptyMap()));
 
         village.setPlayerName(player.getName());
-        World villageWorld = getOrCreateVillageWorld(village);
-        if (villageWorld != null) {
-            if (!village.isStarterGenerated()) {
-                village.addBuilding(BuildingType.BUILDER_HUT, 1);
-                village.addBuilding(BuildingType.GOLD_MINE, 1);
-                village.addBuilding(BuildingType.ELIXIR_COLLECTOR, 1);
-                village.setStarterGenerated(true);
-            }
-
-            if (!village.isObstaclesGenerated()) {
-                generateScenery(villageWorld, village.getPlayerId());
-                village.setObstaclesGenerated(true);
-            }
-
-            renderVillage(villageWorld, village);
-            renderActiveConstruction(village.getPlayerId(), villageWorld);
-            updateResourceHud(player, village);
-            player.teleportAsync(getSafeSpawn(villageWorld));
+        World world = getOrCreateVillageWorld(village);
+        if (world == null) {
+            return;
         }
 
+        if (!village.isStarterGenerated()) {
+            village.addBuilding(BuildingType.BUILDER_HUT, 1);
+            village.addBuilding(BuildingType.GOLD_MINE, 1);
+            village.addBuilding(BuildingType.ELIXIR_COLLECTOR, 1);
+            village.setStarterGenerated(true);
+        }
+        if (!village.isObstaclesGenerated()) {
+            generateScenery(world, village.getPlayerId());
+            village.setObstaclesGenerated(true);
+        }
+
+        renderVillage(world, village);
+        renderAllConstruction(village.getPlayerId(), world);
+        updateResourceHud(player, village);
+        player.teleportAsync(getSafeSpawn(world));
         store.saveAll(villages);
     }
 
@@ -101,37 +116,22 @@ public final class VillageManager {
 
     public String build(Player player, BuildingType type, int amount) {
         if (amount != 1) {
-            return ChatColor.RED + "Build one structure per command for now. Example: /clash build " + type.name().toLowerCase() + " 1";
+            return ChatColor.RED + "Build one structure per command.";
         }
-
         VillageData village = villages.get(player.getUniqueId());
         if (village == null) {
-            return ChatColor.RED + "Village not initialized yet. Rejoin or run /clash tp.";
+            return ChatColor.RED + "Village not initialized.";
         }
-
-        if (!isBuildAllowed(village.getTownHallLevel(), type)) {
-            return ChatColor.RED + "You cannot build " + type.displayName() + " at Town Hall " + village.getTownHallLevel() + ".";
+        if (availableBuilders(village.getPlayerId(), village) <= 0) {
+            return ChatColor.RED + "All builders are busy.";
         }
-
+        if (BalanceBook.maxAtTownHall(type, village.getTownHallLevel()) <= 0) {
+            return ChatColor.RED + "This building is locked at your Town Hall level.";
+        }
         int current = village.getBuildingCount(type);
         int max = BalanceBook.maxAtTownHall(type, village.getTownHallLevel());
         if (current >= max) {
-            return ChatColor.RED + "Max reached for " + type.displayName() + " at this Town Hall (" + max + ").";
-        }
-
-        if (isJobActive(village.getPlayerId(), type, JobKind.BUILD)) {
-            return ChatColor.YELLOW + type.displayName() + " is already under construction.";
-        }
-
-        int availableBuilders = availableBuilders(village.getPlayerId(), village);
-        if (availableBuilders <= 0) {
-            return ChatColor.RED + "All builders are busy. Wait for a build to complete.";
-        }
-
-        int slotIndex = nextBuildSlotIndex(village.getPlayerId(), village, type);
-        List<int[]> slots = BUILDING_SLOTS.getOrDefault(type, List.of());
-        if (slotIndex < 0 || slotIndex >= slots.size()) {
-            return ChatColor.RED + "No free build slot available for " + type.displayName() + ".";
+            return ChatColor.RED + "Max reached for " + type.displayName() + ".";
         }
 
         BalanceBook.BuildInfo info = BalanceBook.buildInfo(type, current, village.getTownHallLevel());
@@ -139,208 +139,140 @@ public final class VillageManager {
             return ChatColor.RED + "Not enough " + currencyName(info.currency()) + ". Need " + info.cost() + ".";
         }
 
-        World world = getOrCreateVillageWorld(village);
-        if (world == null) {
-            return ChatColor.RED + "Could not load your village world.";
+        int slotIndex = current + activeBuildJobsForType(village.getPlayerId(), type);
+        if (type == BuildingType.WALL) {
+            slotIndex = current;
+        }
+        if (!hasSlot(type, slotIndex)) {
+            return ChatColor.RED + "No free slot available for " + type.displayName() + ".";
         }
 
-        ConstructionJob job = createJob(type, JobKind.BUILD, slotIndex, info.buildSeconds(), village.getWorldName());
-        putJob(village.getPlayerId(), job);
+        World world = getOrCreateVillageWorld(village);
+        if (world == null) {
+            return ChatColor.RED + "Could not load world.";
+        }
+
+        ConstructionJob job = createJob(village.getWorldName(), type, JobKind.BUILD, slotIndex, info.buildSeconds());
+        addJob(village.getPlayerId(), job);
         spawnConstructionVisual(job, world);
 
+        player.sendMessage(ChatColor.GOLD + "Started " + type.displayName() + " (" + formatDuration(info.buildSeconds()) + ")");
         updateResourceHud(player, village);
         store.saveAll(villages);
 
-        long delayTicks = Math.max(1L, info.buildSeconds() * 20L);
-        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
-            removeJobAndVisual(village.getPlayerId(), job.key);
-            evacuatePlayersFromJobArea(job);
+        scheduleJobCompletion(village.getPlayerId(), village, job, () -> {
             village.addBuilding(type, 1);
-
-            World villageWorld = getOrCreateVillageWorld(village);
-            if (villageWorld != null) {
-                renderVillage(villageWorld, village);
-                renderActiveConstruction(village.getPlayerId(), villageWorld);
-            }
-
-            if (player.isOnline()) {
-                updateResourceHud(player, village);
-                player.sendMessage(ChatColor.GREEN + type.displayName() + " constructed.");
-            }
-            store.saveAll(villages);
-        }, delayTicks);
-
-        return ChatColor.GOLD + "Started " + type.displayName() + " (" + formatDuration(info.buildSeconds()) + ", "
-                + info.cost() + " " + currencyName(info.currency()) + ").";
+            renderVillage(world, village);
+        });
+        return ChatColor.GREEN + "Builder assigned to " + type.displayName() + ".";
     }
 
     public String upgradeBuilding(Player player, BuildingType type) {
         VillageData village = villages.get(player.getUniqueId());
         if (village == null) {
-            return ChatColor.RED + "Village not initialized yet. Rejoin or run /clash tp.";
+            return ChatColor.RED + "Village not initialized.";
         }
-
         if (village.getBuildingCount(type) <= 0) {
-            return ChatColor.RED + "You do not own " + type.displayName() + " yet.";
+            return ChatColor.RED + "You do not own " + type.displayName() + ".";
+        }
+        if (availableBuilders(village.getPlayerId(), village) <= 0) {
+            return ChatColor.RED + "All builders are busy.";
+        }
+        if (hasActiveJob(village.getPlayerId(), type, JobKind.UPGRADE)) {
+            return ChatColor.YELLOW + "Upgrade already in progress for " + type.displayName() + ".";
         }
 
-        if (isJobActive(village.getPlayerId(), type, JobKind.UPGRADE)) {
-            return ChatColor.YELLOW + type.displayName() + " is already upgrading.";
-        }
-
-        int availableBuilders = availableBuilders(village.getPlayerId(), village);
-        if (availableBuilders <= 0) {
-            return ChatColor.RED + "All builders are busy. Wait for an upgrade/build to complete.";
-        }
-
-        int currentLevel = village.getBuildingLevel(type);
-        BalanceBook.UpgradeInfo info = BalanceBook.upgradeInfo(type, currentLevel, village.getTownHallLevel());
+        BalanceBook.UpgradeInfo info = BalanceBook.upgradeInfo(type, village.getBuildingLevel(type), village.getTownHallLevel());
         if (info == null) {
-            return ChatColor.RED + "No upgrade path available for " + type.displayName() + " at Town Hall " + village.getTownHallLevel() + ".";
+            return ChatColor.RED + "No upgrade available for " + type.displayName() + ".";
         }
-
         if (!takeCurrency(village, info.currency(), info.cost())) {
-            return ChatColor.RED + "Not enough " + currencyName(info.currency()) + ". Need " + info.cost() + ".";
+            return ChatColor.RED + "Not enough " + currencyName(info.currency()) + ".";
         }
 
-        int slotIndex = 0;
         World world = getOrCreateVillageWorld(village);
         if (world == null) {
-            return ChatColor.RED + "Could not load your village world.";
+            return ChatColor.RED + "Could not load world.";
         }
 
-        ConstructionJob job = createJob(type, JobKind.UPGRADE, slotIndex, info.seconds(), village.getWorldName());
-        putJob(village.getPlayerId(), job);
+        ConstructionJob job = createJob(village.getWorldName(), type, JobKind.UPGRADE, 0, info.seconds());
+        addJob(village.getPlayerId(), job);
         spawnConstructionVisual(job, world);
-
         updateResourceHud(player, village);
         store.saveAll(villages);
 
-        long delayTicks = Math.max(1L, info.seconds() * 20L);
-        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
-            removeJobAndVisual(village.getPlayerId(), job.key);
-            evacuatePlayersFromJobArea(job);
+        scheduleJobCompletion(village.getPlayerId(), village, job, () -> {
             village.setBuildingLevel(type, info.nextLevel());
+            renderVillage(world, village);
+        });
 
-            World villageWorld = getOrCreateVillageWorld(village);
-            if (villageWorld != null) {
-                renderVillage(villageWorld, village);
-                renderActiveConstruction(village.getPlayerId(), villageWorld);
-            }
-
-            if (player.isOnline()) {
-                updateResourceHud(player, village);
-                player.sendMessage(ChatColor.GREEN + type.displayName() + " upgraded to level " + info.nextLevel() + ".");
-            }
-            store.saveAll(villages);
-        }, delayTicks);
-
-        return ChatColor.GOLD + "Started upgrade for " + type.displayName() + " (" + formatDuration(info.seconds()) + ", "
-                + info.cost() + " " + currencyName(info.currency()) + ").";
+        return ChatColor.GREEN + "Started upgrade for " + type.displayName() + ".";
     }
 
     public String upgradeTownHall(Player player) {
         VillageData village = villages.get(player.getUniqueId());
         if (village == null) {
-            return ChatColor.RED + "Village not initialized yet. Rejoin or run /clash tp.";
+            return ChatColor.RED + "Village not initialized.";
+        }
+        if (village.getTownHallLevel() >= MAX_TOWN_HALL_LEVEL) {
+            return ChatColor.YELLOW + "Town Hall is maxed for now.";
         }
 
-        int current = village.getTownHallLevel();
-        if (current >= MAX_TOWN_HALL_LEVEL) {
-            return ChatColor.YELLOW + "Town Hall is already max for this build (level " + MAX_TOWN_HALL_LEVEL + ").";
+        Map<BuildingType, Integer> req = RequirementBook.requirementsForCurrentTownHall(village.getTownHallLevel());
+        if (!village.meetsRequirements(req)) {
+            return ChatColor.RED + "Missing required buildings: " + String.join(", ", village.missingRequirements(req));
         }
 
-        Map<BuildingType, Integer> requirements = RequirementBook.requirementsForCurrentTownHall(current);
-        if (!village.meetsRequirements(requirements)) {
-            List<String> missing = village.missingRequirements(requirements);
-            return ChatColor.RED + "Missing required buildings: " + String.join(", ", missing);
+        Map<BuildingType, Integer> levelReq = RequirementBook.levelRequirementsForCurrentTownHall(village.getTownHallLevel());
+        if (!village.meetsLevelRequirements(levelReq)) {
+            return ChatColor.RED + "Missing required levels: " + String.join(", ", village.missingLevelRequirements(levelReq));
         }
 
-        Map<BuildingType, Integer> levelRequirements = RequirementBook.levelRequirementsForCurrentTownHall(current);
-        if (!village.meetsLevelRequirements(levelRequirements)) {
-            List<String> missing = village.missingLevelRequirements(levelRequirements);
-            return ChatColor.RED + "Missing required levels: " + String.join(", ", missing);
-        }
-
-        village.setTownHallLevel(current + 1);
+        village.setTownHallLevel(village.getTownHallLevel() + 1);
         World world = getOrCreateVillageWorld(village);
         if (world != null) {
             renderVillage(world, village);
-            renderActiveConstruction(village.getPlayerId(), world);
         }
         updateResourceHud(player, village);
-
         store.saveAll(villages);
-        return ChatColor.GOLD + "Town Hall upgraded to level " + village.getTownHallLevel() + "!";
+        return ChatColor.GOLD + "Town Hall upgraded to " + village.getTownHallLevel() + ".";
     }
 
     public String teleportToVillage(Player player) {
-        VillageData village = villages.computeIfAbsent(
-                player.getUniqueId(),
-                uuid -> new VillageData(uuid, player.getName(), null, 0,
-                        1000L, 1000L, 500L, false, false, Collections.emptyMap(), Collections.emptyMap())
-        );
-
+        VillageData village = villages.computeIfAbsent(player.getUniqueId(),
+                id -> new VillageData(id, player.getName(), null, 0, 1000L, 1000L, 500L,
+                        0L, 0L, false, false, Collections.emptyMap(), Collections.emptyMap(),
+                        Collections.emptyMap(), Collections.emptyMap()));
         World world = getOrCreateVillageWorld(village);
         if (world == null) {
-            return ChatColor.RED + "Could not create or load your village world.";
+            return ChatColor.RED + "Could not load world.";
         }
-
         renderVillage(world, village);
-        renderActiveConstruction(village.getPlayerId(), world);
+        renderAllConstruction(village.getPlayerId(), world);
         updateResourceHud(player, village);
         player.teleportAsync(getSafeSpawn(world));
-        store.saveAll(villages);
-        return ChatColor.GREEN + "Teleported to your village world: " + world.getName();
+        return ChatColor.GREEN + "Teleported to " + village.getWorldName() + ".";
     }
 
     public List<String> describeVillage(Player player) {
         VillageData village = villages.get(player.getUniqueId());
         if (village == null) {
-            return List.of(ChatColor.RED + "Village not initialized yet.");
+            return List.of(ChatColor.RED + "Village not initialized.");
         }
-
         List<String> lines = new ArrayList<>();
-        lines.add(ChatColor.AQUA + "Village world: " + ChatColor.WHITE + village.getWorldName());
-        lines.add(ChatColor.AQUA + "Town Hall level: " + ChatColor.WHITE + village.getTownHallLevel());
-        lines.add(ChatColor.GOLD + "Gold: " + ChatColor.WHITE + village.getGold()
-                + ChatColor.LIGHT_PURPLE + "  Elixir: " + ChatColor.WHITE + village.getElixir()
-                + ChatColor.AQUA + "  Gems: " + ChatColor.WHITE + village.getGems());
-        lines.add(ChatColor.AQUA + "Builders: " + ChatColor.WHITE + availableBuilders(village.getPlayerId(), village)
-                + ChatColor.GRAY + "/" + totalBuilders(village));
-        lines.add(ChatColor.AQUA + "Builders busy: " + ChatColor.WHITE + busyBuilders(village.getPlayerId()));
-
-        lines.add(ChatColor.AQUA + "Buildings:");
-        if (village.getBuildingsSnapshot().isEmpty()) {
-            lines.add(ChatColor.GRAY + " - none");
-        } else {
-            for (Map.Entry<BuildingType, Integer> entry : village.getBuildingsSnapshot().entrySet()) {
-                int level = village.getBuildingLevel(entry.getKey());
-                lines.add(ChatColor.GRAY + " - " + entry.getKey().displayName() + ": " + entry.getValue() + " (lvl " + level + ")");
-            }
-        }
-
-        Map<BuildingType, Integer> nextRequirements = RequirementBook.requirementsForCurrentTownHall(village.getTownHallLevel());
-        Map<BuildingType, Integer> levelRequirements = RequirementBook.levelRequirementsForCurrentTownHall(village.getTownHallLevel());
-        if (!nextRequirements.isEmpty() || !levelRequirements.isEmpty()) {
-            lines.add(ChatColor.AQUA + "Next upgrade requirements:");
-            for (Map.Entry<BuildingType, Integer> req : nextRequirements.entrySet()) {
-                int current = village.getBuildingCount(req.getKey());
-                String color = current >= req.getValue() ? ChatColor.GREEN.toString() : ChatColor.RED.toString();
-                lines.add(color + " - " + req.getKey().displayName() + ": " + current + "/" + req.getValue());
-            }
-            for (Map.Entry<BuildingType, Integer> req : levelRequirements.entrySet()) {
-                int current = village.getBuildingLevel(req.getKey());
-                String color = current >= req.getValue() ? ChatColor.GREEN.toString() : ChatColor.RED.toString();
-                lines.add(color + " - " + req.getKey().displayName() + " level: " + current + "/" + req.getValue());
-            }
-        }
-
-        Map<JobKey, ConstructionJob> jobs = activeJobs.getOrDefault(village.getPlayerId(), Collections.emptyMap());
-        if (!jobs.isEmpty()) {
-            lines.add(ChatColor.AQUA + "In construction:");
-            for (ConstructionJob job : jobs.values()) {
-                lines.add(ChatColor.GRAY + " - " + job.displayName + " (" + formatDuration(remainingSeconds(job)) + ")");
+        lines.add(ChatColor.AQUA + "Village: " + ChatColor.WHITE + village.getWorldName());
+        lines.add(ChatColor.AQUA + "Town Hall: " + ChatColor.WHITE + village.getTownHallLevel());
+        lines.add(ChatColor.GOLD + "Gold: " + ChatColor.WHITE + village.getGold() + ChatColor.GRAY + " (stored)");
+        lines.add(ChatColor.LIGHT_PURPLE + "Elixir: " + ChatColor.WHITE + village.getElixir() + ChatColor.GRAY + " (stored)");
+        lines.add(ChatColor.YELLOW + "Collectable gold: " + ChatColor.WHITE + village.getPendingGold());
+        lines.add(ChatColor.LIGHT_PURPLE + "Collectable elixir: " + ChatColor.WHITE + village.getPendingElixir());
+        lines.add(ChatColor.AQUA + "Gems: " + ChatColor.WHITE + village.getGems());
+        lines.add(ChatColor.GREEN + "Builders: " + availableBuilders(village.getPlayerId(), village) + "/" + totalBuilders(village));
+        lines.add(ChatColor.AQUA + "Army: " + armyHousingUsed(village) + "/" + armyCapacity(village));
+        for (Map.Entry<TroopType, Integer> troop : village.getTroopsSnapshot().entrySet()) {
+            if (troop.getValue() > 0) {
+                lines.add(ChatColor.GRAY + " - " + troop.getKey().displayName() + " x" + troop.getValue()
+                        + " (lvl " + village.getTroopLevel(troop.getKey()) + ")");
             }
         }
         return lines;
@@ -356,6 +288,224 @@ public final class VillageManager {
         return Collections.unmodifiableSet(allowed);
     }
 
+    public List<String> getBuildTabSuggestions(Player player) {
+        VillageData village = villages.get(player.getUniqueId());
+        int townHallLevel = village == null ? 0 : village.getTownHallLevel();
+        Set<BuildingType> allowed = getBuildableTypes(townHallLevel);
+
+        List<String> names = new ArrayList<>();
+        if (village != null) {
+            Map<BuildingType, Integer> requirements = RequirementBook.requirementsForCurrentTownHall(townHallLevel);
+            for (Map.Entry<BuildingType, Integer> entry : requirements.entrySet()) {
+                BuildingType type = entry.getKey();
+                if (!allowed.contains(type)) {
+                    continue;
+                }
+                if (village.getBuildingCount(type) < entry.getValue()) {
+                    names.add(type.name().toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+
+        for (BuildingType type : allowed) {
+            String name = type.name().toLowerCase(Locale.ROOT);
+            if (!names.contains(name)) {
+                names.add(name);
+            }
+        }
+        return names;
+    }
+
+    public String trainTroop(Player player, TroopType type, int amount) {
+        if (amount <= 0) {
+            return ChatColor.RED + "Amount must be greater than 0.";
+        }
+        VillageData village = villages.get(player.getUniqueId());
+        if (village == null) {
+            return ChatColor.RED + "Village not initialized.";
+        }
+        if (village.getBuildingCount(BuildingType.BARRACKS) <= 0) {
+            return ChatColor.RED + "Build a Barracks first.";
+        }
+        TroopBook.TroopInfo info = TroopBook.info(type);
+        if (village.getBuildingLevel(BuildingType.BARRACKS) < info.barracksLevelRequired()) {
+            return ChatColor.RED + "Barracks level too low for this troop.";
+        }
+
+        int queueSpace = armyCapacity(village) - (armyHousingUsed(village) + queuedHousing(player.getUniqueId()));
+        int possible = Math.min(amount, queueSpace / info.housingSpace());
+        if (possible <= 0) {
+            return ChatColor.RED + "Army camps are full or queue is full.";
+        }
+
+        long cost = info.trainElixir() * possible;
+        if (!village.takeElixir(cost)) {
+            return ChatColor.RED + "Not enough elixir. Need " + cost + ".";
+        }
+
+        long start = System.currentTimeMillis();
+        List<TrainingJob> queue = trainingJobs.computeIfAbsent(player.getUniqueId(), id -> new ArrayList<>());
+        long lastEnd = queue.isEmpty() ? start : queue.get(queue.size() - 1).endsAtMillis;
+        for (int i = 0; i < possible; i++) {
+            lastEnd += info.trainSeconds() * 1000L;
+            queue.add(new TrainingJob(type, lastEnd));
+        }
+        updateResourceHud(player, village);
+        store.saveAll(villages);
+        return ChatColor.GREEN + "Training " + possible + " " + type.displayName() + ".";
+    }
+
+    public String startResearch(Player player, TroopType type) {
+        VillageData village = villages.get(player.getUniqueId());
+        if (village == null) {
+            return ChatColor.RED + "Village not initialized.";
+        }
+        if (village.getBuildingCount(BuildingType.LABORATORY) <= 0) {
+            return ChatColor.RED + "Build Laboratory first.";
+        }
+        if (activeResearch.containsKey(player.getUniqueId())) {
+            return ChatColor.YELLOW + "Laboratory is busy.";
+        }
+        int currentLevel = village.getTroopLevel(type);
+        if (currentLevel >= 2) {
+            return ChatColor.YELLOW + "Research maxed for this demo.";
+        }
+        long cost = 1000L;
+        if (!village.takeElixir(cost)) {
+            return ChatColor.RED + "Need " + cost + " elixir for research.";
+        }
+        long end = System.currentTimeMillis() + 60000L;
+        activeResearch.put(player.getUniqueId(), new ResearchJob(type, currentLevel + 1, end));
+        updateResourceHud(player, village);
+        store.saveAll(villages);
+        return ChatColor.GREEN + "Research started for " + type.displayName() + ".";
+    }
+
+    public String finishNow(Player player, String target) {
+        VillageData village = villages.get(player.getUniqueId());
+        if (village == null) {
+            return ChatColor.RED + "Village not initialized.";
+        }
+        String key = target.toLowerCase(Locale.ROOT);
+
+        if (key.equals("training")) {
+            List<TrainingJob> queue = trainingJobs.getOrDefault(player.getUniqueId(), List.of());
+            if (queue.isEmpty()) {
+                return ChatColor.YELLOW + "No troop training in progress.";
+            }
+            long remaining = Math.max(0L, queue.get(queue.size() - 1).endsAtMillis - System.currentTimeMillis());
+            long gems = Math.max(1L, (remaining + 59999L) / 60000L);
+            if (!village.takeGems(gems)) {
+                return ChatColor.RED + "Need " + gems + " gems.";
+            }
+            for (TrainingJob job : queue) {
+                village.addTroops(job.type, 1);
+            }
+            queue.clear();
+            updateResourceHud(player, village);
+            store.saveAll(villages);
+            return ChatColor.GREEN + "Training finished instantly for " + gems + " gems.";
+        }
+
+        if (key.equals("research")) {
+            ResearchJob job = activeResearch.get(player.getUniqueId());
+            if (job == null) {
+                return ChatColor.YELLOW + "No research active.";
+            }
+            long remaining = Math.max(0L, job.endsAtMillis - System.currentTimeMillis());
+            long gems = Math.max(1L, (remaining + 59999L) / 60000L);
+            if (!village.takeGems(gems)) {
+                return ChatColor.RED + "Need " + gems + " gems.";
+            }
+            village.setTroopLevel(job.troop, job.nextLevel);
+            activeResearch.remove(player.getUniqueId());
+            updateResourceHud(player, village);
+            store.saveAll(villages);
+            return ChatColor.GREEN + "Research finished instantly.";
+        }
+
+        BuildingType type = BuildingType.fromInput(target).orElse(null);
+        if (type == null) {
+            return ChatColor.RED + "Unknown finish target.";
+        }
+
+        ConstructionJob job = findFirstJobByType(player.getUniqueId(), type);
+        if (job == null) {
+            return ChatColor.YELLOW + "No active build/upgrade for " + type.displayName() + ".";
+        }
+        long remaining = Math.max(0L, job.endsAtMillis - System.currentTimeMillis());
+        long gems = Math.max(1L, (remaining + 59999L) / 60000L);
+        if (!village.takeGems(gems)) {
+            return ChatColor.RED + "Need " + gems + " gems.";
+        }
+
+        completeJob(player.getUniqueId(), village, job, true);
+        if (job.kind == JobKind.BUILD) {
+            village.addBuilding(job.type, 1);
+        } else if (job.kind == JobKind.UPGRADE) {
+            village.setBuildingLevel(job.type, village.getBuildingLevel(job.type) + 1);
+        }
+        World world = Bukkit.getWorld(village.getWorldName());
+        if (world != null) {
+            renderVillage(world, village);
+            renderAllConstruction(player.getUniqueId(), world);
+        }
+        updateResourceHud(player, village);
+        store.saveAll(villages);
+        return ChatColor.GREEN + "Finished " + type.displayName() + " instantly for " + gems + " gems.";
+    }
+
+    public String collectResources(Player player) {
+        VillageData village = villages.get(player.getUniqueId());
+        if (village == null) {
+            return ChatColor.RED + "Village not initialized.";
+        }
+        long beforeGold = village.getGold();
+        long beforeElixir = village.getElixir();
+        village.collectGold(goldStorageCap(village));
+        village.collectElixir(elixirStorageCap(village));
+        long gainedGold = village.getGold() - beforeGold;
+        long gainedElixir = village.getElixir() - beforeElixir;
+        updateResourceHud(player, village);
+        store.saveAll(villages);
+        return ChatColor.GREEN + "Collected " + gainedGold + " gold and " + gainedElixir + " elixir.";
+    }
+
+    public String handleVillageInteract(Player player, Block clicked) {
+        if (clicked == null || !isVillageWorld(clicked.getWorld())) {
+            return null;
+        }
+        VillageData village = villages.get(player.getUniqueId());
+        if (village == null) {
+            return ChatColor.RED + "Village not initialized.";
+        }
+
+        if (OBSTACLE_BLOCKS.contains(clicked.getType()) && isScenery(clicked.getLocation())) {
+            int removed = clearObstacleCluster(clicked);
+            if (removed > 0) {
+                int gems = 1 + new Random().nextInt(4);
+                village.addGems(gems);
+                updateResourceHud(player, village);
+                store.saveAll(villages);
+                return ChatColor.GREEN + "Obstacle removed. Gems found: " + gems;
+            }
+        }
+
+        BuildingHit hit = resolveBuildingHit(village, clicked.getLocation());
+        if (hit == null) {
+            return null;
+        }
+
+        if (hit.type == BuildingType.GOLD_MINE || hit.type == BuildingType.ELIXIR_COLLECTOR) {
+            String collected = collectResources(player);
+            openBuildingInfo(player, village, hit);
+            return collected;
+        }
+
+        openBuildingInfo(player, village, hit);
+        return null;
+    }
+
     public void tickResourceGeneration() {
         boolean changed = false;
         for (Player player : Bukkit.getOnlinePlayers()) {
@@ -364,16 +514,16 @@ public final class VillageManager {
                 continue;
             }
 
-            long goldGain = (long) village.getBuildingCount(BuildingType.GOLD_MINE)
-                    * (2 + village.getBuildingLevel(BuildingType.GOLD_MINE));
-            long elixirGain = (long) village.getBuildingCount(BuildingType.ELIXIR_COLLECTOR)
-                    * (2 + village.getBuildingLevel(BuildingType.ELIXIR_COLLECTOR));
-            village.addGold(goldGain);
-            village.addElixir(elixirGain);
+            long goldRate = (long) village.getBuildingCount(BuildingType.GOLD_MINE)
+                    * (village.getBuildingLevel(BuildingType.GOLD_MINE) <= 1 ? 1L : 2L);
+            long elixirRate = (long) village.getBuildingCount(BuildingType.ELIXIR_COLLECTOR)
+                    * (village.getBuildingLevel(BuildingType.ELIXIR_COLLECTOR) <= 1 ? 1L : 2L);
+
+            village.addPendingGold(goldRate, mineCollectorCap(village, BuildingType.GOLD_MINE));
+            village.addPendingElixir(elixirRate, mineCollectorCap(village, BuildingType.ELIXIR_COLLECTOR));
             updateResourceHud(player, village);
             changed = true;
         }
-
         if (changed) {
             store.saveAll(villages);
         }
@@ -381,74 +531,89 @@ public final class VillageManager {
 
     public void tickConstructionVisuals() {
         long now = System.currentTimeMillis();
-        for (Map.Entry<UUID, Map<JobKey, ConstructionJob>> entry : activeJobs.entrySet()) {
-            UUID playerId = entry.getKey();
-            Map<JobKey, ConstructionJob> jobs = entry.getValue();
-            for (ConstructionJob job : jobs.values()) {
+
+        for (Map.Entry<UUID, Map<String, ConstructionJob>> entry : activeJobs.entrySet()) {
+            UUID ownerId = entry.getKey();
+            VillageData village = villages.get(ownerId);
+            for (ConstructionJob job : entry.getValue().values()) {
                 if (job.hologram != null && !job.hologram.isDead()) {
-                    long remaining = Math.max(0L, (job.endsAtMillis - now + 999L) / 1000L);
-                    job.hologram.setCustomName(ChatColor.YELLOW + job.displayName + ChatColor.GRAY + " - " + formatDuration((int) remaining));
-                }
-                if (job.builderNpc != null && !job.builderNpc.isDead()) {
-                    job.builderNpc.setAI(true);
+                    long remain = Math.max(0L, (job.endsAtMillis - now + 999L) / 1000L);
+                    job.hologram.setCustomName(ChatColor.YELLOW + job.displayName + ChatColor.GRAY + " - " + formatDuration(remain));
                 }
             }
-
-            Player owner = Bukkit.getPlayer(playerId);
-            VillageData village = villages.get(playerId);
-            if (owner != null && owner.isOnline() && village != null) {
+            Player owner = Bukkit.getPlayer(ownerId);
+            if (owner != null && village != null) {
                 updateResourceHud(owner, village);
             }
         }
-    }
 
-    public void tickArcherTowerDefense() {
-        for (Player owner : Bukkit.getOnlinePlayers()) {
-            VillageData village = villages.get(owner.getUniqueId());
+        for (Map.Entry<UUID, List<TrainingJob>> entry : trainingJobs.entrySet()) {
+            VillageData village = villages.get(entry.getKey());
             if (village == null) {
                 continue;
             }
+            List<TrainingJob> queue = entry.getValue();
+            int trained = 0;
+            while (!queue.isEmpty() && queue.get(0).endsAtMillis <= now) {
+                TrainingJob done = queue.remove(0);
+                village.addTroops(done.type, 1);
+                trained++;
+            }
+            if (trained > 0) {
+                Player owner = Bukkit.getPlayer(entry.getKey());
+                if (owner != null) {
+                    owner.sendMessage(ChatColor.GREEN + "Troops ready: +" + trained);
+                    updateResourceHud(owner, village);
+                }
+            }
+        }
+
+        for (Map.Entry<UUID, ResearchJob> entry : new HashMap<>(activeResearch).entrySet()) {
+            if (entry.getValue().endsAtMillis > now) {
+                continue;
+            }
+            VillageData village = villages.get(entry.getKey());
+            if (village == null) {
+                continue;
+            }
+            ResearchJob job = entry.getValue();
+            village.setTroopLevel(job.troop, job.nextLevel);
+            activeResearch.remove(entry.getKey());
+            Player owner = Bukkit.getPlayer(entry.getKey());
+            if (owner != null) {
+                owner.sendMessage(ChatColor.GREEN + job.troop.displayName() + " upgraded to level " + job.nextLevel + ".");
+                updateResourceHud(owner, village);
+            }
+        }
+
+        store.saveAll(villages);
+    }
+
+    public void tickArcherTowerDefense() {
+        for (VillageData village : villages.values()) {
             World world = Bukkit.getWorld(village.getWorldName());
             if (world == null) {
                 continue;
             }
-
-            int count = village.getBuildingCount(BuildingType.ARCHER_TOWER);
-            if (count <= 0) {
-                continue;
-            }
-
-            List<int[]> slots = BUILDING_SLOTS.getOrDefault(BuildingType.ARCHER_TOWER, List.of());
-            int limit = Math.min(count, slots.size());
-            for (int i = 0; i < limit; i++) {
-                int[] slot = slots.get(i);
-                Location towerTop = new Location(world, slot[0] + 0.5, GROUND_Y + 7.6, slot[1] + 0.5);
-                fireArcherTowerAtNearestMonster(world, towerTop, 18.0);
+            int count = Math.min(village.getBuildingCount(BuildingType.ARCHER_TOWER), slotList(BuildingType.ARCHER_TOWER).size());
+            for (int i = 0; i < count; i++) {
+                int[] slot = slotList(BuildingType.ARCHER_TOWER).get(i);
+                Location source = new Location(world, slot[0] + 0.5, GROUND_Y + 7.2, slot[1] + 0.5);
+                fireArcherTower(source, 18.0);
             }
         }
     }
 
     public void tickCannonDefense() {
-        for (Player owner : Bukkit.getOnlinePlayers()) {
-            VillageData village = villages.get(owner.getUniqueId());
-            if (village == null) {
-                continue;
-            }
+        for (VillageData village : villages.values()) {
             World world = Bukkit.getWorld(village.getWorldName());
             if (world == null) {
                 continue;
             }
-
-            int count = village.getBuildingCount(BuildingType.CANNON);
-            if (count <= 0) {
-                continue;
-            }
-
-            List<int[]> slots = BUILDING_SLOTS.getOrDefault(BuildingType.CANNON, List.of());
-            int limit = Math.min(count, slots.size());
-            for (int i = 0; i < limit; i++) {
-                int[] slot = slots.get(i);
-                fireCannonAtNearestMonster(world, slot[0], slot[1], 14.0);
+            int count = Math.min(village.getBuildingCount(BuildingType.CANNON), slotList(BuildingType.CANNON).size());
+            for (int i = 0; i < count; i++) {
+                int[] slot = slotList(BuildingType.CANNON).get(i);
+                fireCannon(world, slot[0], slot[1], 14.0);
             }
         }
     }
@@ -461,24 +626,19 @@ public final class VillageManager {
         if (location == null || location.getWorld() == null || !isVillageWorld(location.getWorld())) {
             return true;
         }
-        double x = location.getX();
-        double z = location.getZ();
-        return (x * x + z * z) <= (PLAYABLE_RADIUS * PLAYABLE_RADIUS);
+        return location.getX() * location.getX() + location.getZ() * location.getZ() <= PLAYABLE_RADIUS * PLAYABLE_RADIUS;
     }
 
     public boolean isInsideConstructionZone(Location location) {
         if (location == null || location.getWorld() == null || !isVillageWorld(location.getWorld())) {
             return false;
         }
-
-        UUID ownerId = findOwnerByWorld(location.getWorld().getName());
-        if (ownerId == null) {
+        UUID owner = findOwnerByWorld(location.getWorld().getName());
+        if (owner == null) {
             return false;
         }
-
-        Map<JobKey, ConstructionJob> jobs = activeJobs.getOrDefault(ownerId, Collections.emptyMap());
-        for (ConstructionJob job : jobs.values()) {
-            if (isInsideJobArea(location, job)) {
+        for (ConstructionJob job : activeJobs.getOrDefault(owner, Collections.emptyMap()).values()) {
+            if (isInsideJob(job, location)) {
                 return true;
             }
         }
@@ -489,67 +649,234 @@ public final class VillageManager {
         if (from == null || from.getWorld() == null) {
             return from;
         }
-
-        UUID ownerId = findOwnerByWorld(from.getWorld().getName());
-        if (ownerId == null) {
+        UUID owner = findOwnerByWorld(from.getWorld().getName());
+        if (owner == null) {
             return nearestPlayableLocation(from.getWorld(), from);
         }
-
         ConstructionJob nearest = null;
-        double nearestDist = Double.MAX_VALUE;
-        for (ConstructionJob job : activeJobs.getOrDefault(ownerId, Collections.emptyMap()).values()) {
-            int[] slot = slotOf(job);
-            double dx = from.getX() - (slot[0] + 0.5);
-            double dz = from.getZ() - (slot[1] + 0.5);
-            double d2 = dx * dx + dz * dz;
-            if (d2 < nearestDist) {
-                nearestDist = d2;
+        double dist = Double.MAX_VALUE;
+        for (ConstructionJob job : activeJobs.getOrDefault(owner, Collections.emptyMap()).values()) {
+            Location center = jobCenter(from.getWorld(), job);
+            double d2 = center.distanceSquared(from);
+            if (d2 < dist) {
+                dist = d2;
                 nearest = job;
             }
         }
-
         if (nearest == null) {
             return nearestPlayableLocation(from.getWorld(), from);
         }
-
-        int[] slot = slotOf(nearest);
-        int radius = constructionRadius(nearest.type) + 2;
-        Vector out = new Vector(from.getX() - (slot[0] + 0.5), 0.0, from.getZ() - (slot[1] + 0.5));
-        if (out.lengthSquared() < 0.0001) {
-            out = new Vector(1.0, 0.0, 0.0);
+        Location center = jobCenter(from.getWorld(), nearest);
+        Vector out = from.toVector().subtract(center.toVector()).setY(0);
+        if (out.lengthSquared() < 0.001) {
+            out = new Vector(1, 0, 0);
         }
-        out.normalize().multiply(radius);
-
-        Location candidate = new Location(from.getWorld(), slot[0] + 0.5 + out.getX(), GROUND_Y + 2.0,
-                slot[1] + 0.5 + out.getZ(), from.getYaw(), from.getPitch());
-        return nearestPlayableLocation(from.getWorld(), candidate);
+        out.normalize().multiply(constructionRadius(nearest.type) + 2);
+        return nearestPlayableLocation(from.getWorld(), center.clone().add(out).add(0, 1, 0));
     }
 
     public Location nearestPlayableLocation(World world, Location from) {
         if (world == null || from == null) {
             return null;
         }
-        Vector flat = new Vector(from.getX(), 0.0, from.getZ());
-        if (flat.lengthSquared() <= (PLAYABLE_RADIUS - 2.0) * (PLAYABLE_RADIUS - 2.0)) {
-            return new Location(world, from.getX(), GROUND_Y + 2.0, from.getZ(), from.getYaw(), from.getPitch());
+        Vector v = new Vector(from.getX(), 0, from.getZ());
+        double max = PLAYABLE_RADIUS - 2.0;
+        if (v.lengthSquared() > max * max) {
+            v.normalize().multiply(max);
         }
-        if (flat.lengthSquared() < 0.0001) {
-            return getSafeSpawn(world);
-        }
-
-        flat.normalize().multiply(PLAYABLE_RADIUS - 2.0);
-        return new Location(world, flat.getX() + 0.5, GROUND_Y + 2.0, flat.getZ() + 0.5, from.getYaw(), from.getPitch());
+        return new Location(world, v.getX() + 0.5, GROUND_Y + 2.0, v.getZ() + 0.5, from.getYaw(), from.getPitch());
     }
 
     public void shutdown() {
-        for (UUID playerId : new ArrayList<>(activeJobs.keySet())) {
-            clearAllJobVisuals(playerId);
+        for (UUID id : new ArrayList<>(activeJobs.keySet())) {
+            for (ConstructionJob job : activeJobs.getOrDefault(id, Collections.emptyMap()).values()) {
+                clearJobVisual(job);
+            }
         }
         store.saveAll(villages);
     }
 
-    private boolean isBuildAllowed(int townHallLevel, BuildingType type) {
-        return BalanceBook.maxAtTownHall(type, townHallLevel) > 0;
+    private void scheduleJobCompletion(UUID playerId, VillageData village, ConstructionJob job, Runnable apply) {
+        long delayTicks = Math.max(1L, ((job.endsAtMillis - System.currentTimeMillis()) / 50L));
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (!hasJob(playerId, job.id)) {
+                return;
+            }
+            completeJob(playerId, village, job, false);
+            apply.run();
+            World world = Bukkit.getWorld(village.getWorldName());
+            if (world != null) {
+                renderVillage(world, village);
+                renderAllConstruction(playerId, world);
+            }
+            Player online = Bukkit.getPlayer(playerId);
+            if (online != null) {
+                updateResourceHud(online, village);
+            }
+            store.saveAll(villages);
+        }, delayTicks);
+    }
+
+    private void completeJob(UUID playerId, VillageData village, ConstructionJob job, boolean immediate) {
+        removeJob(playerId, job.id);
+        clearJobVisual(job);
+        evacuatePlayersFromArea(job);
+        Player player = Bukkit.getPlayer(playerId);
+        if (player != null) {
+            player.sendMessage(ChatColor.GREEN + (immediate ? "Instantly finished " : "Completed ") + job.type.displayName() + ".");
+        }
+    }
+
+    private void fireArcherTower(Location source, double range) {
+        Monster target = findNearestMonster(source.getWorld(), source, range, false);
+        if (target == null) {
+            return;
+        }
+        Vector flat = target.getLocation().toVector().subtract(source.toVector()).setY(0);
+        if (flat.lengthSquared() < 0.001) {
+            flat = new Vector(1, 0, 0);
+        }
+        flat.normalize();
+        Location launch = source.clone().add(flat.multiply(2.3)).add(0, 0.2, 0);
+        Vector dir = target.getLocation().add(0, 1.1, 0).toVector().subtract(launch.toVector()).normalize();
+        AbstractArrow arrow = source.getWorld().spawnArrow(launch, dir, 3.2f, 0.0f);
+        arrow.setDamage(3.0);
+        arrow.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
+        target.damage(1.0);
+    }
+
+    private void fireCannon(World world, int cx, int cz, double range) {
+        Location source = new Location(world, cx + 0.5, GROUND_Y + 2.5, cz + 0.5);
+        Monster target = findNearestMonster(world, source, range, true);
+        if (target == null) {
+            return;
+        }
+        Vector flat = target.getLocation().toVector().subtract(source.toVector()).setY(0);
+        if (flat.lengthSquared() < 0.001) {
+            flat = new Vector(1, 0, 0);
+        }
+        rotateCannonBlock(world, cx, cz, faceFromVector(flat));
+        Vector dir = target.getLocation().add(0, 0.7, 0).toVector().subtract(source.toVector()).normalize();
+        Location launch = source.clone().add(dir.clone().multiply(1.8));
+        AbstractArrow shell = world.spawnArrow(launch, dir, 3.8f, 0.01f);
+        shell.setDamage(6.0);
+        shell.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
+        target.damage(4.0);
+    }
+
+    private Monster findNearestMonster(World world, Location source, double range, boolean groundOnly) {
+        if (world == null) {
+            return null;
+        }
+        Monster nearest = null;
+        double nearestD2 = Double.MAX_VALUE;
+        for (Entity entity : world.getNearbyEntities(source, range, range, range)) {
+            if (!(entity instanceof Monster monster)) {
+                continue;
+            }
+            if (groundOnly && !monster.isOnGround()) {
+                continue;
+            }
+            double d2 = monster.getLocation().distanceSquared(source);
+            if (d2 < nearestD2) {
+                nearestD2 = d2;
+                nearest = monster;
+            }
+        }
+        return nearest;
+    }
+
+    private void rotateCannonBlock(World world, int cx, int cz, BlockFace face) {
+        Block block = world.getBlockAt(cx, GROUND_Y + 2, cz);
+        if (block.getType() != Material.DISPENSER) {
+            return;
+        }
+        if (block.getBlockData() instanceof Directional directional) {
+            directional.setFacing(face);
+            block.setBlockData(directional, false);
+        }
+    }
+
+    private BlockFace faceFromVector(Vector vector) {
+        if (Math.abs(vector.getX()) >= Math.abs(vector.getZ())) {
+            return vector.getX() >= 0 ? BlockFace.EAST : BlockFace.WEST;
+        }
+        return vector.getZ() >= 0 ? BlockFace.SOUTH : BlockFace.NORTH;
+    }
+
+    private void updateResourceHud(Player player, VillageData village) {
+        ScoreboardManager manager = Bukkit.getScoreboardManager();
+        if (manager == null) {
+            return;
+        }
+        Scoreboard board = manager.getNewScoreboard();
+        Objective objective = board.registerNewObjective("clashhud", "dummy", ChatColor.GOLD + "Clash Village");
+        objective.setDisplaySlot(DisplaySlot.SIDEBAR);
+
+        int totalBuilders = totalBuilders(village);
+        int busy = busyBuilders(village.getPlayerId());
+        int free = Math.max(0, totalBuilders - busy);
+
+        objective.getScore(ChatColor.YELLOW + "Town Hall: " + ChatColor.WHITE + village.getTownHallLevel()).setScore(10);
+        objective.getScore(ChatColor.GOLD + "Gold: " + ChatColor.WHITE + village.getGold() + "/" + goldStorageCap(village)).setScore(9);
+        objective.getScore(ChatColor.LIGHT_PURPLE + "Elixir: " + ChatColor.WHITE + village.getElixir() + "/" + elixirStorageCap(village)).setScore(8);
+        objective.getScore(ChatColor.GRAY + "Mine bank: " + village.getPendingGold()).setScore(7);
+        objective.getScore(ChatColor.GRAY + "Collector bank: " + village.getPendingElixir()).setScore(6);
+        objective.getScore(ChatColor.AQUA + "Gems: " + ChatColor.WHITE + village.getGems()).setScore(5);
+        objective.getScore(ChatColor.GREEN + "Builders free: " + ChatColor.WHITE + free + ChatColor.GRAY + "/" + totalBuilders).setScore(4);
+        objective.getScore(ChatColor.RED + "Builders busy: " + ChatColor.WHITE + busy).setScore(3);
+        objective.getScore(ChatColor.BLUE + "Army: " + ChatColor.WHITE + armyHousingUsed(village) + "/" + armyCapacity(village)).setScore(2);
+        objective.getScore(ChatColor.DARK_GRAY + " ").setScore(1);
+        player.setScoreboard(board);
+        updateTabOverlay(player, village);
+    }
+
+    private void updateTabOverlay(Player player, VillageData village) {
+        Map<BuildingType, Integer> req = RequirementBook.requirementsForCurrentTownHall(village.getTownHallLevel());
+        Map<BuildingType, Integer> levelReq = RequirementBook.levelRequirementsForCurrentTownHall(village.getTownHallLevel());
+
+        StringBuilder footer = new StringBuilder();
+        footer.append(ChatColor.YELLOW).append("TH ")
+                .append(village.getTownHallLevel())
+                .append(" -> ")
+                .append(village.getTownHallLevel() + 1)
+                .append(ChatColor.GRAY)
+                .append(" requirements");
+
+        if (req.isEmpty() && levelReq.isEmpty()) {
+            footer.append("\n").append(ChatColor.GREEN).append("No requirements left.");
+        } else {
+            for (Map.Entry<BuildingType, Integer> entry : req.entrySet()) {
+                int have = village.getBuildingCount(entry.getKey());
+                boolean done = have >= entry.getValue();
+                footer.append("\n")
+                        .append(done ? ChatColor.GREEN : ChatColor.RED)
+                        .append(entry.getKey().displayName())
+                        .append(ChatColor.GRAY)
+                        .append(" ")
+                        .append(have)
+                        .append("/")
+                        .append(entry.getValue());
+            }
+            for (Map.Entry<BuildingType, Integer> entry : levelReq.entrySet()) {
+                int have = village.getBuildingLevel(entry.getKey());
+                boolean done = village.getBuildingCount(entry.getKey()) > 0 && have >= entry.getValue();
+                footer.append("\n")
+                        .append(done ? ChatColor.GREEN : ChatColor.RED)
+                        .append(entry.getKey().displayName())
+                        .append(ChatColor.GRAY)
+                        .append(" lvl ")
+                        .append(have)
+                        .append("/")
+                        .append(entry.getValue());
+            }
+        }
+
+        String header = ChatColor.GOLD + "Clash Village" + ChatColor.GRAY
+                + " | TH " + village.getTownHallLevel()
+                + ChatColor.DARK_GRAY + " | " + ChatColor.GREEN + "Builders "
+                + availableBuilders(village.getPlayerId(), village) + "/" + totalBuilders(village);
+        player.setPlayerListHeaderFooter(header, footer.toString());
     }
 
     private World getOrCreateVillageWorld(VillageData village) {
@@ -558,75 +885,49 @@ public final class VillageManager {
             worldName = "coc_" + village.getPlayerId().toString().substring(0, 8);
             village.setWorldName(worldName);
         }
-
         World existing = Bukkit.getWorld(worldName);
         if (existing != null) {
             return existing;
         }
-
-        WorldCreator creator = new WorldCreator(worldName)
+        World created = new WorldCreator(worldName)
                 .environment(World.Environment.NORMAL)
                 .type(WorldType.FLAT)
-                .generateStructures(false);
-        World created = creator.createWorld();
-        if (created != null) {
-            created.setGameRule(GameRule.DO_MOB_SPAWNING, false);
-            created.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
-            created.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
-            created.setGameRule(GameRule.DO_PATROL_SPAWNING, false);
-            created.setTime(1000L);
-            created.setStorm(false);
-            created.setThundering(false);
-            created.setSpawnLocation(0, GROUND_Y + 2, -10);
-
-            WorldBorder border = created.getWorldBorder();
-            border.setCenter(0.0, 0.0);
-            border.setSize(140.0);
+                .generateStructures(false)
+                .createWorld();
+        if (created == null) {
+            return null;
         }
+        created.setGameRule(GameRule.DO_MOB_SPAWNING, false);
+        created.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
+        created.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
+        created.setTime(1000L);
+        created.setSpawnLocation(0, GROUND_Y + 2, -10);
+        WorldBorder border = created.getWorldBorder();
+        border.setCenter(0, 0);
+        border.setSize(140.0);
         return created;
     }
 
-    private void updateResourceHud(Player player, VillageData village) {
-        ScoreboardManager manager = Bukkit.getScoreboardManager();
-        if (manager == null) {
-            return;
-        }
-
-        Scoreboard scoreboard = manager.getNewScoreboard();
-        Objective objective = scoreboard.registerNewObjective("clashhud", "dummy", ChatColor.GOLD + "Clash Village");
-        objective.setDisplaySlot(DisplaySlot.SIDEBAR);
-
-        int total = totalBuilders(village);
-        int busy = busyBuilders(village.getPlayerId());
-        int available = Math.max(0, total - busy);
-
-        objective.getScore(ChatColor.YELLOW + "Town Hall: " + ChatColor.WHITE + village.getTownHallLevel()).setScore(7);
-        objective.getScore(ChatColor.GOLD + "Gold: " + ChatColor.WHITE + village.getGold()).setScore(6);
-        objective.getScore(ChatColor.LIGHT_PURPLE + "Elixir: " + ChatColor.WHITE + village.getElixir()).setScore(5);
-        objective.getScore(ChatColor.AQUA + "Gems: " + ChatColor.WHITE + village.getGems()).setScore(4);
-        objective.getScore(ChatColor.GREEN + "Builders free: " + ChatColor.WHITE + available + ChatColor.GRAY + "/" + total).setScore(3);
-        objective.getScore(ChatColor.RED + "Builders busy: " + ChatColor.WHITE + busy).setScore(2);
-        objective.getScore(ChatColor.DARK_GRAY + " ").setScore(1);
-
-        player.setScoreboard(scoreboard);
-    }
-
     private void renderVillage(World world, VillageData village) {
-        clearAllJobVisuals(village.getPlayerId());
-        flattenVillageCore(world);
-        clearCoreAboveGround(world);
+        clearAbove(world);
+        flatten(world);
         placeBoundary(world);
         placeTownHall(world, village.getTownHallLevel());
-
         for (Map.Entry<BuildingType, Integer> entry : village.getBuildingsSnapshot().entrySet()) {
             placeBuildings(world, entry.getKey(), entry.getValue(), village.getBuildingLevel(entry.getKey()));
         }
     }
 
-    private void flattenVillageCore(World world) {
+    private void renderAllConstruction(UUID playerId, World world) {
+        for (ConstructionJob job : activeJobs.getOrDefault(playerId, Collections.emptyMap()).values()) {
+            spawnConstructionVisual(job, world);
+        }
+    }
+
+    private void flatten(World world) {
         for (int x = -SCENERY_RADIUS; x <= SCENERY_RADIUS; x++) {
             for (int z = -SCENERY_RADIUS; z <= SCENERY_RADIUS; z++) {
-                if ((x * x) + (z * z) > SCENERY_RADIUS * SCENERY_RADIUS) {
+                if (x * x + z * z > SCENERY_RADIUS * SCENERY_RADIUS) {
                     continue;
                 }
                 world.getBlockAt(x, GROUND_Y - 1, z).setType(Material.DIRT, false);
@@ -635,13 +936,13 @@ public final class VillageManager {
         }
     }
 
-    private void clearCoreAboveGround(World world) {
+    private void clearAbove(World world) {
         for (int x = -PLAYABLE_RADIUS; x <= PLAYABLE_RADIUS; x++) {
             for (int z = -PLAYABLE_RADIUS; z <= PLAYABLE_RADIUS; z++) {
-                if ((x * x) + (z * z) > PLAYABLE_RADIUS * PLAYABLE_RADIUS) {
+                if (x * x + z * z > PLAYABLE_RADIUS * PLAYABLE_RADIUS) {
                     continue;
                 }
-                for (int y = GROUND_Y + 1; y <= GROUND_Y + 12; y++) {
+                for (int y = GROUND_Y + 1; y <= GROUND_Y + 14; y++) {
                     world.getBlockAt(x, y, z).setType(Material.AIR, false);
                 }
             }
@@ -666,27 +967,26 @@ public final class VillageManager {
         }
     }
 
-    private void generateScenery(World world, UUID seedSource) {
-        Random random = new Random(seedSource.getMostSignificantBits() ^ seedSource.getLeastSignificantBits());
-        for (int i = 0; i < 46; i++) {
-            double angle = random.nextDouble() * Math.PI * 2.0;
-            double distance = (PLAYABLE_RADIUS + 8.0) + random.nextDouble() * 14.0;
-            int x = (int) Math.round(Math.cos(angle) * distance);
-            int z = (int) Math.round(Math.sin(angle) * distance);
-            int y = GROUND_Y + 1;
-
+    private void generateScenery(World world, UUID seed) {
+        Random random = new Random(seed.getMostSignificantBits() ^ seed.getLeastSignificantBits());
+        for (int i = 0; i < 50; i++) {
+            double angle = random.nextDouble() * Math.PI * 2;
+            double radius = PLAYABLE_RADIUS + 8 + random.nextDouble() * 14;
+            int x = (int) Math.round(Math.cos(angle) * radius);
+            int z = (int) Math.round(Math.sin(angle) * radius);
             int style = random.nextInt(3);
             if (style == 0) {
-                placeTreeObstacle(world, x, y, z);
+                placeTree(world, x, z);
             } else if (style == 1) {
-                placeRockObstacle(world, x, y, z);
+                placeRock(world, x, z);
             } else {
-                placeBushObstacle(world, x, y, z);
+                placeBush(world, x, z);
             }
         }
     }
 
-    private void placeTreeObstacle(World world, int x, int y, int z) {
+    private void placeTree(World world, int x, int z) {
+        int y = GROUND_Y + 1;
         for (int i = 0; i < 3; i++) {
             world.getBlockAt(x, y + i, z).setType(Material.OAK_LOG, false);
         }
@@ -697,120 +997,125 @@ public final class VillageManager {
                 }
             }
         }
-        world.getBlockAt(x, y + 4, z).setType(Material.OAK_LEAVES, false);
     }
 
-    private void placeRockObstacle(World world, int x, int y, int z) {
-        Material[] materials = new Material[]{Material.COBBLESTONE, Material.MOSSY_COBBLESTONE, Material.STONE};
-        for (int ox = -1; ox <= 1; ox++) {
-            for (int oz = -1; oz <= 1; oz++) {
-                if (Math.abs(ox) + Math.abs(oz) <= 2) {
-                    Material material = materials[Math.floorMod(x + z + ox + oz, materials.length)];
-                    world.getBlockAt(x + ox, y, z + oz).setType(material, false);
-                }
-            }
-        }
+    private void placeRock(World world, int x, int z) {
+        int y = GROUND_Y + 1;
+        world.getBlockAt(x, y, z).setType(Material.COBBLESTONE, false);
+        world.getBlockAt(x + 1, y, z).setType(Material.MOSSY_COBBLESTONE, false);
+        world.getBlockAt(x, y, z + 1).setType(Material.STONE, false);
     }
 
-    private void placeBushObstacle(World world, int x, int y, int z) {
+    private void placeBush(World world, int x, int z) {
+        int y = GROUND_Y + 1;
         world.getBlockAt(x, y, z).setType(Material.FLOWERING_AZALEA_LEAVES, false);
         world.getBlockAt(x + 1, y, z).setType(Material.AZALEA_LEAVES, false);
         world.getBlockAt(x - 1, y, z).setType(Material.AZALEA_LEAVES, false);
-        world.getBlockAt(x, y, z + 1).setType(Material.AZALEA_LEAVES, false);
-        world.getBlockAt(x, y, z - 1).setType(Material.AZALEA_LEAVES, false);
     }
 
-    private void placeTownHall(World world, int townHallLevel) {
-        Material wall = switch (townHallLevel) {
+    private void placeTownHall(World world, int level) {
+        Material wall = switch (level) {
             case 0 -> Material.OAK_PLANKS;
             case 1 -> Material.STONE_BRICKS;
             default -> Material.POLISHED_DEEPSLATE;
         };
-
-        Material roof = switch (townHallLevel) {
+        Material roof = switch (level) {
             case 0 -> Material.DARK_OAK_STAIRS;
             case 1 -> Material.BRICKS;
             default -> Material.DEEPSLATE_TILES;
         };
-
-        int baseY = GROUND_Y + 1;
-        fillRect(world, -3, baseY, -3, 3, baseY, 3, Material.COBBLESTONE);
-        hollowRect(world, -2, baseY + 1, -2, 2, baseY + 4, 2, wall);
-        fillRect(world, -3, baseY + 5, -3, 3, baseY + 5, 3, roof);
-        world.getBlockAt(0, baseY + 1, -2).setType(Material.AIR, false);
-        world.getBlockAt(0, baseY + 2, -2).setType(Material.AIR, false);
+        int y = GROUND_Y + 1;
+        fill(world, -3, y, -3, 3, y, 3, Material.COBBLESTONE);
+        hollow(world, -2, y + 1, -2, 2, y + 4, 2, wall);
+        fill(world, -3, y + 5, -3, 3, y + 5, 3, roof);
+        world.getBlockAt(0, y + 1, -2).setType(Material.AIR, false);
+        world.getBlockAt(0, y + 2, -2).setType(Material.AIR, false);
     }
 
     private void placeBuildings(World world, BuildingType type, int count, int level) {
-        List<int[]> slots = BUILDING_SLOTS.getOrDefault(type, List.of());
+        List<int[]> slots = slotList(type);
         int limit = Math.min(count, slots.size());
         for (int i = 0; i < limit; i++) {
-            int[] offset = slots.get(i);
-            int x = offset[0];
-            int z = offset[1];
+            int[] slot = slots.get(i);
+            int x = slot[0];
+            int z = slot[1];
             switch (type) {
                 case BUILDER_HUT -> placeBuilderHut(world, x, z);
                 case GOLD_MINE -> placeGoldMine(world, x, z, level);
                 case ELIXIR_COLLECTOR -> placeElixirCollector(world, x, z, level);
+                case GOLD_STORAGE -> placeGoldStorage(world, x, z, level);
+                case ELIXIR_STORAGE -> placeElixirStorage(world, x, z, level);
                 case BARRACKS -> placeBarracks(world, x, z);
                 case ARMY_CAMP -> placeArmyCamp(world, x, z);
+                case LABORATORY -> placeLaboratory(world, x, z);
                 case CANNON -> placeCannon(world, x, z);
                 case ARCHER_TOWER -> placeArcherTower(world, x, z);
+                case WALL -> placeWall(world, x, z);
             }
         }
     }
 
     private void placeBuilderHut(World world, int cx, int cz) {
         int y = GROUND_Y + 1;
-        fillRect(world, cx - 2, y, cz - 2, cx + 2, y, cz + 2, Material.OAK_PLANKS);
-        hollowRect(world, cx - 1, y + 1, cz - 1, cx + 1, y + 2, cz + 1, Material.SPRUCE_PLANKS);
-        fillRect(world, cx - 2, y + 3, cz - 2, cx + 2, y + 3, cz + 2, Material.SPRUCE_SLAB);
-        world.getBlockAt(cx, y + 1, cz - 1).setType(Material.AIR, false);
+        fill(world, cx - 2, y, cz - 2, cx + 2, y, cz + 2, Material.OAK_PLANKS);
+        hollow(world, cx - 1, y + 1, cz - 1, cx + 1, y + 2, cz + 1, Material.SPRUCE_PLANKS);
+        fill(world, cx - 2, y + 3, cz - 2, cx + 2, y + 3, cz + 2, Material.SPRUCE_SLAB);
     }
 
     private void placeGoldMine(World world, int cx, int cz, int level) {
         int y = GROUND_Y + 1;
-        fillRect(world, cx - 2, y, cz - 2, cx + 2, y, cz + 2, Material.STONE_BRICKS);
-        fillRect(world, cx - 1, y + 1, cz - 1, cx + 1, y + 2, cz + 1, Material.SMOOTH_STONE);
-        world.getBlockAt(cx, y + 1, cz).setType(Material.HOPPER, false);
+        fill(world, cx - 2, y, cz - 2, cx + 2, y, cz + 2, Material.STONE_BRICKS);
+        fill(world, cx - 1, y + 1, cz - 1, cx + 1, y + 2, cz + 1, Material.SMOOTH_STONE);
         world.getBlockAt(cx, y + 2, cz).setType(level >= 2 ? Material.RAW_GOLD_BLOCK : Material.GOLD_BLOCK, false);
-        world.getBlockAt(cx + 2, y + 1, cz).setType(Material.TORCH, false);
-        world.getBlockAt(cx - 2, y + 1, cz).setType(Material.TORCH, false);
     }
 
     private void placeElixirCollector(World world, int cx, int cz, int level) {
         int y = GROUND_Y + 1;
-        fillRect(world, cx - 2, y, cz - 2, cx + 2, y, cz + 2, Material.POLISHED_ANDESITE);
-        fillRect(world, cx - 1, y + 1, cz - 1, cx + 1, y + 2, cz + 1, Material.AMETHYST_BLOCK);
+        fill(world, cx - 2, y, cz - 2, cx + 2, y, cz + 2, Material.POLISHED_ANDESITE);
+        fill(world, cx - 1, y + 1, cz - 1, cx + 1, y + 2, cz + 1, Material.AMETHYST_BLOCK);
         world.getBlockAt(cx, y + 3, cz).setType(level >= 2 ? Material.PURPLE_STAINED_GLASS : Material.MAGENTA_STAINED_GLASS, false);
-        world.getBlockAt(cx + 1, y + 1, cz).setType(Material.PURPLE_CANDLE, false);
-        world.getBlockAt(cx - 1, y + 1, cz).setType(Material.PURPLE_CANDLE, false);
+    }
+
+    private void placeGoldStorage(World world, int cx, int cz, int level) {
+        int y = GROUND_Y + 1;
+        fill(world, cx - 2, y, cz - 2, cx + 2, y, cz + 2, Material.SMOOTH_SANDSTONE);
+        fill(world, cx - 1, y + 1, cz - 1, cx + 1, y + 2, cz + 1, Material.CHEST);
+        world.getBlockAt(cx, y + 3, cz).setType(level >= 2 ? Material.GOLD_BLOCK : Material.COPPER_BLOCK, false);
+    }
+
+    private void placeElixirStorage(World world, int cx, int cz, int level) {
+        int y = GROUND_Y + 1;
+        fill(world, cx - 2, y, cz - 2, cx + 2, y, cz + 2, Material.CALCITE);
+        fill(world, cx - 1, y + 1, cz - 1, cx + 1, y + 2, cz + 1, Material.GLASS);
+        world.getBlockAt(cx, y + 3, cz).setType(level >= 2 ? Material.PURPLE_CONCRETE : Material.MAGENTA_CONCRETE, false);
     }
 
     private void placeBarracks(World world, int cx, int cz) {
         int y = GROUND_Y + 1;
-        fillRect(world, cx - 3, y, cz - 3, cx + 3, y, cz + 3, Material.STONE_BRICKS);
-        hollowRect(world, cx - 2, y + 1, cz - 2, cx + 2, y + 3, cz + 2, Material.BRICKS);
-        fillRect(world, cx - 3, y + 4, cz - 3, cx + 3, y + 4, cz + 3, Material.RED_WOOL);
+        fill(world, cx - 3, y, cz - 3, cx + 3, y, cz + 3, Material.STONE_BRICKS);
+        hollow(world, cx - 2, y + 1, cz - 2, cx + 2, y + 3, cz + 2, Material.BRICKS);
+        fill(world, cx - 3, y + 4, cz - 3, cx + 3, y + 4, cz + 3, Material.RED_WOOL);
     }
 
     private void placeArmyCamp(World world, int cx, int cz) {
         int y = GROUND_Y + 1;
-        fillRect(world, cx - 3, y, cz - 3, cx + 3, y, cz + 3, Material.PACKED_MUD);
+        fill(world, cx - 3, y, cz - 3, cx + 3, y, cz + 3, Material.PACKED_MUD);
         for (int x = cx - 3; x <= cx + 3; x++) {
             world.getBlockAt(x, y + 1, cz - 3).setType(Material.OAK_FENCE, false);
             world.getBlockAt(x, y + 1, cz + 3).setType(Material.OAK_FENCE, false);
         }
-        for (int z = cz - 3; z <= cz + 3; z++) {
-            world.getBlockAt(cx - 3, y + 1, z).setType(Material.OAK_FENCE, false);
-            world.getBlockAt(cx + 3, y + 1, z).setType(Material.OAK_FENCE, false);
-        }
-        world.getBlockAt(cx, y + 1, cz).setType(Material.CAMPFIRE, false);
+    }
+
+    private void placeLaboratory(World world, int cx, int cz) {
+        int y = GROUND_Y + 1;
+        fill(world, cx - 3, y, cz - 3, cx + 3, y, cz + 3, Material.QUARTZ_BLOCK);
+        hollow(world, cx - 2, y + 1, cz - 2, cx + 2, y + 3, cz + 2, Material.WHITE_STAINED_GLASS);
+        world.getBlockAt(cx, y + 4, cz).setType(Material.ENCHANTING_TABLE, false);
     }
 
     private void placeCannon(World world, int cx, int cz) {
         int y = GROUND_Y + 1;
-        fillRect(world, cx - 1, y, cz - 1, cx + 1, y, cz + 1, Material.STONE);
+        fill(world, cx - 1, y, cz - 1, cx + 1, y, cz + 1, Material.STONE);
         world.getBlockAt(cx, y + 1, cz).setType(Material.DISPENSER, false);
         world.getBlockAt(cx, y + 1, cz - 1).setType(Material.IRON_BARS, false);
         world.getBlockAt(cx, y + 1, cz + 1).setType(Material.STONE_BRICK_WALL, false);
@@ -818,115 +1123,24 @@ public final class VillageManager {
 
     private void placeArcherTower(World world, int cx, int cz) {
         int y = GROUND_Y + 1;
-        fillRect(world, cx - 1, y, cz - 1, cx + 1, y, cz + 1, Material.COBBLESTONE);
+        fill(world, cx - 1, y, cz - 1, cx + 1, y, cz + 1, Material.COBBLESTONE);
         for (int i = 1; i <= 4; i++) {
             world.getBlockAt(cx, y + i, cz).setType(Material.SPRUCE_LOG, false);
         }
-        fillRect(world, cx - 1, y + 5, cz - 1, cx + 1, y + 5, cz + 1, Material.SPRUCE_PLANKS);
-        world.getBlockAt(cx, y + 6, cz).setType(Material.SKELETON_SKULL, false);
+        fill(world, cx - 1, y + 5, cz - 1, cx + 1, y + 5, cz + 1, Material.SPRUCE_PLANKS);
     }
 
-    private void fireArcherTowerAtNearestMonster(World world, Location source, double range) {
-        Monster target = findNearestMonster(world, source, range, false);
-        if (target == null) {
-            return;
-        }
-
-        Vector flat = target.getLocation().toVector().subtract(source.toVector());
-        flat.setY(0.0);
-        if (flat.lengthSquared() < 0.0001) {
-            flat = new Vector(1.0, 0.0, 0.0);
-        }
-        flat.normalize();
-
-        // Move the launch point outside the tower cap so arrows do not clip into tower blocks.
-        Location launch = source.clone().add(flat.clone().multiply(1.85)).add(0.0, 0.2, 0.0);
-        Vector direction = target.getLocation().toVector().add(new Vector(0.0, 1.1, 0.0)).subtract(launch.toVector());
-        if (direction.lengthSquared() < 0.0001) {
-            return;
-        }
-
-        AbstractArrow arrow = world.spawnArrow(launch, direction.normalize(), 3.0f, 0.08f);
-        arrow.setDamage(3.0);
-        arrow.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
-    }
-
-    private void fireCannonAtNearestMonster(World world, int cx, int cz, double range) {
-        Location pivot = new Location(world, cx + 0.5, GROUND_Y + 2.2, cz + 0.5);
-        Monster target = findNearestMonster(world, pivot, range, true);
-        if (target == null) {
-            return;
-        }
-
-        Vector flat = target.getLocation().toVector().subtract(pivot.toVector());
-        flat.setY(0.0);
-        if (flat.lengthSquared() < 0.0001) {
-            flat = new Vector(1.0, 0.0, 0.0);
-        }
-        rotateCannonBlock(world, cx, cz, faceFromVector(flat));
-
-        Vector direction = target.getLocation().toVector().add(new Vector(0.0, 0.7, 0.0)).subtract(pivot.toVector());
-        if (direction.lengthSquared() < 0.0001) {
-            return;
-        }
-
-        Vector normalized = direction.normalize();
-        Location launch = pivot.clone().add(normalized.clone().multiply(1.3));
-        AbstractArrow shell = world.spawnArrow(launch, normalized, 3.5f, 0.02f);
-        shell.setDamage(5.0);
-        shell.setKnockbackStrength(1);
-        shell.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
-    }
-
-    private Monster findNearestMonster(World world, Location source, double range, boolean groundOnly) {
-        Monster nearest = null;
-        double nearestDistance = Double.MAX_VALUE;
-        for (Entity entity : world.getNearbyEntities(source, range, range, range)) {
-            if (!(entity instanceof Monster monster)) {
-                continue;
-            }
-            if (monster.isDead() || !monster.isValid()) {
-                continue;
-            }
-            if (groundOnly && !monster.isOnGround()) {
-                continue;
-            }
-
-            double distance = entity.getLocation().distanceSquared(source);
-            if (distance < nearestDistance) {
-                nearestDistance = distance;
-                nearest = monster;
-            }
-        }
-        return nearest;
-    }
-
-    private void rotateCannonBlock(World world, int cx, int cz, BlockFace face) {
-        Block block = world.getBlockAt(cx, GROUND_Y + 2, cz);
-        if (block.getType() != Material.DISPENSER) {
-            return;
-        }
-        if (!(block.getBlockData() instanceof Directional directional)) {
-            return;
-        }
-        directional.setFacing(face);
-        block.setBlockData(directional, false);
-    }
-
-    private BlockFace faceFromVector(Vector vector) {
-        if (Math.abs(vector.getX()) >= Math.abs(vector.getZ())) {
-            return vector.getX() >= 0 ? BlockFace.EAST : BlockFace.WEST;
-        }
-        return vector.getZ() >= 0 ? BlockFace.SOUTH : BlockFace.NORTH;
+    private void placeWall(World world, int cx, int cz) {
+        world.getBlockAt(cx, GROUND_Y + 1, cz).setType(Material.COBBLESTONE_WALL, false);
     }
 
     private void spawnConstructionVisual(ConstructionJob job, World world) {
-        int[] center = slotOf(job);
-        int cx = center[0];
-        int cz = center[1];
+        Location center = jobCenter(world, job);
+        int cx = center.getBlockX();
+        int cz = center.getBlockZ();
         int y = GROUND_Y + 1;
-
         int radius = constructionRadius(job.type);
+
         for (int x = cx - radius; x <= cx + radius; x++) {
             for (int z = cz - radius; z <= cz + radius; z++) {
                 boolean edge = x == cx - radius || x == cx + radius || z == cz - radius || z == cz + radius;
@@ -941,27 +1155,21 @@ public final class VillageManager {
             }
         }
 
-        Location npcLocation = new Location(world, cx + 0.5, y + 0.0, cz + 0.5);
-        Villager villager = world.spawn(npcLocation, Villager.class, spawned -> {
-            spawned.setProfession(Villager.Profession.MASON);
-            spawned.setAdult();
-            spawned.setInvulnerable(true);
-            spawned.setRemoveWhenFarAway(false);
-            spawned.setCustomName(ChatColor.GOLD + "Builder");
-            spawned.setCustomNameVisible(false);
+        job.builderNpc = world.spawn(new Location(world, cx + 0.5, y, cz + 0.5), Villager.class, npc -> {
+            npc.setInvulnerable(true);
+            npc.setAI(true);
+            npc.setProfession(Villager.Profession.MASON);
+            npc.setCustomName(ChatColor.GOLD + "Builder");
+            npc.setCustomNameVisible(false);
+            npc.setRemoveWhenFarAway(false);
         });
-        job.builderNpc = villager;
-
-        Location holoLocation = new Location(world, cx + 0.5, y + 4.2, cz + 0.5);
-        ArmorStand stand = world.spawn(holoLocation, ArmorStand.class, spawned -> {
-            spawned.setInvisible(true);
-            spawned.setInvulnerable(true);
-            spawned.setGravity(false);
-            spawned.setMarker(true);
-            spawned.setCustomNameVisible(true);
-            spawned.setCustomName(ChatColor.YELLOW + job.displayName + ChatColor.GRAY + " - " + formatDuration(remainingSeconds(job)));
+        job.hologram = world.spawn(new Location(world, cx + 0.5, y + 4.2, cz + 0.5), ArmorStand.class, stand -> {
+            stand.setInvisible(true);
+            stand.setMarker(true);
+            stand.setGravity(false);
+            stand.setCustomNameVisible(true);
+            stand.setCustomName(ChatColor.YELLOW + job.displayName + ChatColor.GRAY + " - " + formatDuration(remainingSeconds(job)));
         });
-        job.hologram = stand;
     }
 
     private void clearJobVisual(ConstructionJob job) {
@@ -971,7 +1179,6 @@ public final class VillageManager {
         if (job.builderNpc != null && !job.builderNpc.isDead()) {
             job.builderNpc.remove();
         }
-
         World world = Bukkit.getWorld(job.worldName);
         if (world != null) {
             for (BlockPos pos : job.fenceBlocks) {
@@ -984,95 +1191,89 @@ public final class VillageManager {
         job.fenceBlocks.clear();
     }
 
-    private void removeJobAndVisual(UUID playerId, JobKey key) {
-        ConstructionJob removed = removeJob(playerId, key);
-        if (removed != null) {
-            clearJobVisual(removed);
-        }
-    }
-
-    private void clearAllJobVisuals(UUID playerId) {
-        Map<JobKey, ConstructionJob> jobs = activeJobs.get(playerId);
-        if (jobs == null) {
-            return;
-        }
-        for (ConstructionJob job : jobs.values()) {
-            clearJobVisual(job);
-        }
-    }
-
-    private void renderActiveConstruction(UUID playerId, World world) {
-        Map<JobKey, ConstructionJob> jobs = activeJobs.get(playerId);
-        if (jobs == null || jobs.isEmpty()) {
-            return;
-        }
-        for (ConstructionJob job : jobs.values()) {
-            spawnConstructionVisual(job, world);
-        }
-    }
-
-    private void evacuatePlayersFromJobArea(ConstructionJob job) {
+    private void evacuatePlayersFromArea(ConstructionJob job) {
         World world = Bukkit.getWorld(job.worldName);
         if (world == null) {
             return;
         }
-
-        int[] slot = slotOf(job);
-        int radius = constructionRadius(job.type);
         for (Player player : world.getPlayers()) {
-            Location location = player.getLocation();
-            double dx = Math.abs(location.getX() - (slot[0] + 0.5));
-            double dz = Math.abs(location.getZ() - (slot[1] + 0.5));
-            if (dx <= radius + 0.4 && dz <= radius + 0.4 && location.getY() <= GROUND_Y + 8.0) {
-                Location safe = nearestConstructionSafeLocation(location);
-                if (safe == null) {
-                    safe = getSafeSpawn(world);
-                }
-                player.teleportAsync(safe);
+            if (isInsideJob(job, player.getLocation())) {
+                player.teleportAsync(nearestPlayableLocation(world, player.getLocation()));
             }
         }
     }
 
-    private ConstructionJob createJob(BuildingType type, JobKind kind, int slotIndex, int seconds, String worldName) {
-        long endsAt = System.currentTimeMillis() + Math.max(1L, seconds) * 1000L;
-        String action = kind == JobKind.BUILD ? "Building " : "Upgrading ";
-        return new ConstructionJob(new JobKey(type, kind), type, slotIndex, worldName, action + type.displayName(), endsAt);
-    }
-
-    private int constructionRadius(BuildingType type) {
-        return switch (type) {
-            case BARRACKS, ARMY_CAMP -> 4;
-            default -> 3;
-        };
-    }
-
-    private UUID findOwnerByWorld(String worldName) {
-        if (worldName == null || worldName.isBlank()) {
-            return null;
+    private boolean isInsideJob(ConstructionJob job, Location location) {
+        if (location == null || location.getWorld() == null || !Objects.equals(location.getWorld().getName(), job.worldName)) {
+            return false;
         }
-        for (VillageData village : villages.values()) {
-            if (worldName.equals(village.getWorldName())) {
-                return village.getPlayerId();
+        Location center = jobCenter(location.getWorld(), job);
+        int radius = constructionRadius(job.type);
+        return Math.abs(location.getX() - center.getX()) <= radius + 0.5
+                && Math.abs(location.getZ() - center.getZ()) <= radius + 0.5
+                && location.getY() <= GROUND_Y + 8;
+    }
+
+    private Location jobCenter(World world, ConstructionJob job) {
+        if (job.customX != null && job.customZ != null) {
+            return new Location(world, job.customX + 0.5, GROUND_Y + 1, job.customZ + 0.5);
+        }
+        int[] slot = slotList(job.type).get(Math.max(0, Math.min(job.slotIndex, slotList(job.type).size() - 1)));
+        return new Location(world, slot[0] + 0.5, GROUND_Y + 1, slot[1] + 0.5);
+    }
+
+    private ConstructionJob createJob(String worldName, BuildingType type, JobKind kind, int slotIndex, int seconds) {
+        long ends = System.currentTimeMillis() + Math.max(1, seconds) * 1000L;
+        String id = kind.name() + ":" + type.name() + ":" + slotIndex;
+        return new ConstructionJob(id, type, kind, slotIndex, null, null, worldName,
+                (kind == JobKind.BUILD ? "Building " : "Upgrading ") + type.displayName(), ends);
+    }
+
+    private void addJob(UUID playerId, ConstructionJob job) {
+        activeJobs.computeIfAbsent(playerId, id -> new LinkedHashMap<>()).put(job.id, job);
+    }
+
+    private void removeJob(UUID playerId, String id) {
+        Map<String, ConstructionJob> jobs = activeJobs.get(playerId);
+        if (jobs == null) {
+            return;
+        }
+        jobs.remove(id);
+        if (jobs.isEmpty()) {
+            activeJobs.remove(playerId);
+        }
+    }
+
+    private boolean hasJob(UUID playerId, String id) {
+        return activeJobs.getOrDefault(playerId, Collections.emptyMap()).containsKey(id);
+    }
+
+    private ConstructionJob findFirstJobByType(UUID playerId, BuildingType type) {
+        for (ConstructionJob job : activeJobs.getOrDefault(playerId, Collections.emptyMap()).values()) {
+            if (job.type == type) {
+                return job;
             }
         }
         return null;
     }
 
-    private int[] slotOf(ConstructionJob job) {
-        List<int[]> slots = BUILDING_SLOTS.getOrDefault(job.type, List.of(new int[]{0, 0}));
-        int safeIndex = Math.max(0, Math.min(job.slotIndex, slots.size() - 1));
-        return slots.get(safeIndex);
+    private boolean hasActiveJob(UUID playerId, BuildingType type, JobKind kind) {
+        for (ConstructionJob job : activeJobs.getOrDefault(playerId, Collections.emptyMap()).values()) {
+            if (job.type == type && job.kind == kind) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    private boolean isInsideJobArea(Location location, ConstructionJob job) {
-        if (!location.getWorld().getName().equals(job.worldName)) {
-            return false;
+    private int activeBuildJobsForType(UUID playerId, BuildingType type) {
+        int count = 0;
+        for (ConstructionJob job : activeJobs.getOrDefault(playerId, Collections.emptyMap()).values()) {
+            if (job.type == type && job.kind == JobKind.BUILD) {
+                count++;
+            }
         }
-        int[] slot = slotOf(job);
-        int radius = constructionRadius(job.type);
-        double dx = Math.abs(location.getX() - (slot[0] + 0.5));
-        double dz = Math.abs(location.getZ() - (slot[1] + 0.5));
-        return dx <= radius + 0.4 && dz <= radius + 0.4 && location.getY() <= GROUND_Y + 8.0;
+        return count;
     }
 
     private int totalBuilders(VillageData village) {
@@ -1087,40 +1288,60 @@ public final class VillageManager {
         return Math.max(0, totalBuilders(village) - busyBuilders(playerId));
     }
 
-    private int nextBuildSlotIndex(UUID playerId, VillageData village, BuildingType type) {
-        int finished = village.getBuildingCount(type);
-        int inBuild = 0;
-        for (JobKey key : activeJobs.getOrDefault(playerId, Collections.emptyMap()).keySet()) {
-            if (key.type == type && key.kind == JobKind.BUILD) {
-                inBuild++;
-            }
-        }
-        return finished + inBuild;
+    private long goldStorageCap(VillageData village) {
+        long thBase = switch (village.getTownHallLevel()) {
+            case 0 -> 1000L;
+            case 1 -> 2000L;
+            default -> 3500L;
+        };
+        int level = village.getBuildingLevel(BuildingType.GOLD_STORAGE);
+        long storage = level >= 2 ? 3000L : (level >= 1 ? 1500L : 0L);
+        return thBase + storage;
     }
 
-    private boolean isJobActive(UUID playerId, BuildingType type, JobKind kind) {
-        return activeJobs.getOrDefault(playerId, Collections.emptyMap()).containsKey(new JobKey(type, kind));
+    private long elixirStorageCap(VillageData village) {
+        long thBase = switch (village.getTownHallLevel()) {
+            case 0 -> 1000L;
+            case 1 -> 2000L;
+            default -> 3500L;
+        };
+        int level = village.getBuildingLevel(BuildingType.ELIXIR_STORAGE);
+        long storage = level >= 2 ? 3000L : (level >= 1 ? 1500L : 0L);
+        return thBase + storage;
     }
 
-    private void putJob(UUID playerId, ConstructionJob job) {
-        activeJobs.computeIfAbsent(playerId, key -> new LinkedHashMap<>()).put(job.key, job);
+    private long mineCollectorCap(VillageData village, BuildingType type) {
+        int count = village.getBuildingCount(type);
+        int level = village.getBuildingLevel(type);
+        long each = level >= 2 ? 2000L : 1000L;
+        return Math.max(0L, count * each);
     }
 
-    private ConstructionJob removeJob(UUID playerId, JobKey key) {
-        Map<JobKey, ConstructionJob> jobs = activeJobs.get(playerId);
-        if (jobs == null) {
-            return null;
+    private boolean takeCurrency(VillageData village, BalanceBook.Currency currency, long amount) {
+        if (amount <= 0) {
+            return true;
         }
-        ConstructionJob removed = jobs.remove(key);
-        if (jobs.isEmpty()) {
-            activeJobs.remove(playerId);
-        }
-        return removed;
+        return switch (currency) {
+            case GOLD -> village.takeGold(amount);
+            case ELIXIR -> village.takeElixir(amount);
+            case GEMS -> village.takeGems(amount);
+        };
+    }
+
+    private String currencyName(BalanceBook.Currency currency) {
+        return currency.name().toLowerCase(Locale.ROOT);
+    }
+
+    private int constructionRadius(BuildingType type) {
+        return switch (type) {
+            case WALL -> 1;
+            case BARRACKS, ARMY_CAMP, LABORATORY -> 4;
+            default -> 3;
+        };
     }
 
     private long remainingSeconds(ConstructionJob job) {
-        long millis = Math.max(0L, job.endsAtMillis - System.currentTimeMillis());
-        return (millis + 999L) / 1000L;
+        return Math.max(0L, (job.endsAtMillis - System.currentTimeMillis() + 999L) / 1000L);
     }
 
     private String formatDuration(long totalSeconds) {
@@ -1131,7 +1352,6 @@ public final class VillageManager {
         seconds %= 3600;
         long minutes = seconds / 60;
         long secs = seconds % 60;
-
         List<String> parts = new ArrayList<>();
         if (days > 0) {
             parts.add(days + "d");
@@ -1146,27 +1366,161 @@ public final class VillageManager {
         return String.join(" ", parts);
     }
 
-    private boolean takeCurrency(VillageData village, BalanceBook.Currency currency, long amount) {
-        if (amount <= 0) {
-            return true;
-        }
-
-        return switch (currency) {
-            case GOLD -> village.takeGold(amount);
-            case ELIXIR -> village.takeElixir(amount);
-            case GEMS -> village.takeGems(amount);
-        };
+    private List<int[]> slotList(BuildingType type) {
+        return type == BuildingType.WALL ? WALL_SLOTS : BUILDING_SLOTS.getOrDefault(type, List.of());
     }
 
-    private String currencyName(BalanceBook.Currency currency) {
-        return currency.name().toLowerCase();
+    private boolean hasSlot(BuildingType type, int index) {
+        List<int[]> slots = slotList(type);
+        return index >= 0 && index < slots.size();
+    }
+
+    private int armyCapacity(VillageData village) {
+        return village.getBuildingCount(BuildingType.ARMY_CAMP) * ARMY_CAP_PER_CAMP;
+    }
+
+    private int troopHousing(TroopType type) {
+        return TroopBook.info(type).housingSpace();
+    }
+
+    private int armyHousingUsed(VillageData village) {
+        int used = 0;
+        for (Map.Entry<TroopType, Integer> troop : village.getTroopsSnapshot().entrySet()) {
+            used += troop.getValue() * troopHousing(troop.getKey());
+        }
+        return used;
+    }
+
+    private int queuedHousing(UUID playerId) {
+        int used = 0;
+        for (TrainingJob job : trainingJobs.getOrDefault(playerId, List.of())) {
+            used += troopHousing(job.type);
+        }
+        return used;
     }
 
     private Location getSafeSpawn(World world) {
-        return new Location(world, 0.5, GROUND_Y + 2.0, -10.5, 0F, 0F);
+        return new Location(world, 0.5, GROUND_Y + 2.0, -10.5, 0f, 0f);
     }
 
-    private void fillRect(World world, int minX, int minY, int minZ, int maxX, int maxY, int maxZ, Material material) {
+    private UUID findOwnerByWorld(String worldName) {
+        for (VillageData village : villages.values()) {
+            if (worldName.equals(village.getWorldName())) {
+                return village.getPlayerId();
+            }
+        }
+        return null;
+    }
+
+    private boolean isScenery(Location location) {
+        double d2 = location.getX() * location.getX() + location.getZ() * location.getZ();
+        return d2 > (PLAYABLE_RADIUS + 2.0) * (PLAYABLE_RADIUS + 2.0);
+    }
+
+    private int clearObstacleCluster(Block start) {
+        Set<BlockPos> visited = new java.util.HashSet<>();
+        ArrayDeque<BlockPos> queue = new ArrayDeque<>();
+        queue.add(new BlockPos(start.getX(), start.getY(), start.getZ()));
+        int removed = 0;
+        while (!queue.isEmpty() && removed < 40) {
+            BlockPos pos = queue.poll();
+            if (!visited.add(pos)) {
+                continue;
+            }
+            Block block = start.getWorld().getBlockAt(pos.x, pos.y, pos.z);
+            if (!OBSTACLE_BLOCKS.contains(block.getType())) {
+                continue;
+            }
+            block.setType(Material.AIR, false);
+            removed++;
+            for (int ox = -1; ox <= 1; ox++) {
+                for (int oy = -1; oy <= 1; oy++) {
+                    for (int oz = -1; oz <= 1; oz++) {
+                        if (Math.abs(ox) + Math.abs(oy) + Math.abs(oz) != 1) {
+                            continue;
+                        }
+                        queue.add(new BlockPos(pos.x + ox, pos.y + oy, pos.z + oz));
+                    }
+                }
+            }
+        }
+        return removed;
+    }
+
+    private BuildingHit resolveBuildingHit(VillageData village, Location location) {
+        if (location == null) {
+            return null;
+        }
+
+        if (Math.abs(location.getX()) <= 4 && Math.abs(location.getZ()) <= 4 && location.getY() >= GROUND_Y + 1) {
+            return new BuildingHit(BuildingType.BUILDER_HUT, -1, 1, "Town Hall");
+        }
+
+        for (Map.Entry<BuildingType, Integer> entry : village.getBuildingsSnapshot().entrySet()) {
+            BuildingType type = entry.getKey();
+            int count = Math.min(entry.getValue(), slotList(type).size());
+            int radius = switch (type) {
+                case WALL -> 0;
+                case BARRACKS, ARMY_CAMP, LABORATORY -> 4;
+                default -> 3;
+            };
+            for (int i = 0; i < count; i++) {
+                int[] slot = slotList(type).get(i);
+                if (Math.abs(location.getX() - slot[0]) <= radius && Math.abs(location.getZ() - slot[1]) <= radius
+                        && location.getY() >= GROUND_Y + 1 && location.getY() <= GROUND_Y + 8) {
+                    return new BuildingHit(type, i, village.getBuildingLevel(type), type.displayName());
+                }
+            }
+        }
+        return null;
+    }
+
+    private void openBuildingInfo(Player player, VillageData village, BuildingHit hit) {
+        Inventory inv = Bukkit.createInventory(null, 27, ChatColor.GOLD + "Building Info");
+        inv.setItem(11, infoItem(Material.BOOK, ChatColor.YELLOW + capitalize(hit.name), List.of(
+                ChatColor.GRAY + "Level: " + ChatColor.WHITE + hit.level,
+                ChatColor.GRAY + "Type: " + ChatColor.WHITE + hit.type.name().toLowerCase(Locale.ROOT),
+                ChatColor.GRAY + "Use /clash upgrade " + hit.type.name().toLowerCase(Locale.ROOT)
+        )));
+
+        if (hit.type == BuildingType.GOLD_MINE || hit.type == BuildingType.ELIXIR_COLLECTOR) {
+            inv.setItem(13, infoItem(Material.HOPPER, ChatColor.GREEN + "Collect", List.of(
+                    ChatColor.GRAY + "Pending gold: " + village.getPendingGold(),
+                    ChatColor.GRAY + "Pending elixir: " + village.getPendingElixir(),
+                    ChatColor.GRAY + "Right click collector/mine to collect"
+            )));
+        }
+
+        if (hit.type == BuildingType.BARRACKS) {
+            inv.setItem(15, infoItem(Material.IRON_SWORD, ChatColor.AQUA + "Training", List.of(
+                    ChatColor.GRAY + "/clash train barbarian 5",
+                    ChatColor.GRAY + "/clash train archer 5",
+                    ChatColor.GRAY + "/clash train giant 2"
+            )));
+        }
+
+        player.openInventory(inv);
+    }
+
+    private ItemStack infoItem(Material material, String name, List<String> lore) {
+        ItemStack stack = new ItemStack(material);
+        ItemMeta meta = stack.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(name);
+            meta.setLore(lore);
+            stack.setItemMeta(meta);
+        }
+        return stack;
+    }
+
+    private String capitalize(String value) {
+        if (value == null || value.isBlank()) {
+            return value;
+        }
+        return value.substring(0, 1).toUpperCase(Locale.ROOT) + value.substring(1);
+    }
+
+    private void fill(World world, int minX, int minY, int minZ, int maxX, int maxY, int maxZ, Material material) {
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 for (int z = minZ; z <= maxZ; z++) {
@@ -1176,13 +1530,12 @@ public final class VillageManager {
         }
     }
 
-    private void hollowRect(World world, int minX, int minY, int minZ, int maxX, int maxY, int maxZ, Material material) {
+    private void hollow(World world, int minX, int minY, int minZ, int maxX, int maxY, int maxZ, Material material) {
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 for (int z = minZ; z <= maxZ; z++) {
                     boolean wall = x == minX || x == maxX || y == minY || y == maxY || z == minZ || z == maxZ;
-                    Block block = world.getBlockAt(x, y, z);
-                    block.setType(wall ? material : Material.AIR, false);
+                    world.getBlockAt(x, y, z).setType(wall ? material : Material.AIR, false);
                 }
             }
         }
@@ -1193,11 +1546,28 @@ public final class VillageManager {
         slots.put(BuildingType.BUILDER_HUT, List.of(new int[]{-14, -10}, new int[]{14, -10}, new int[]{-22, 8}, new int[]{22, 8}));
         slots.put(BuildingType.GOLD_MINE, List.of(new int[]{-12, 10}, new int[]{12, 10}, new int[]{-24, 0}, new int[]{24, 0}));
         slots.put(BuildingType.ELIXIR_COLLECTOR, List.of(new int[]{-10, 18}, new int[]{10, 18}, new int[]{-18, -18}, new int[]{18, -18}));
+        slots.put(BuildingType.GOLD_STORAGE, List.of(new int[]{-20, 16}, new int[]{20, 16}));
+        slots.put(BuildingType.ELIXIR_STORAGE, List.of(new int[]{-20, -16}, new int[]{20, -16}));
         slots.put(BuildingType.BARRACKS, List.of(new int[]{0, -20}, new int[]{0, 20}));
         slots.put(BuildingType.ARMY_CAMP, List.of(new int[]{-28, 14}, new int[]{28, 14}));
+        slots.put(BuildingType.LABORATORY, List.of(new int[]{0, 26}));
         slots.put(BuildingType.CANNON, List.of(new int[]{-26, -8}, new int[]{26, -8}));
         slots.put(BuildingType.ARCHER_TOWER, List.of(new int[]{-30, 0}, new int[]{30, 0}));
         return Collections.unmodifiableMap(slots);
+    }
+
+    private static List<int[]> createWallSlots() {
+        List<int[]> slots = new ArrayList<>();
+        int r = 10;
+        for (int x = -r; x <= r; x += 2) {
+            slots.add(new int[]{x, -r});
+            slots.add(new int[]{x, r});
+        }
+        for (int z = -r + 2; z <= r - 2; z += 2) {
+            slots.add(new int[]{-r, z});
+            slots.add(new int[]{r, z});
+        }
+        return Collections.unmodifiableList(slots);
     }
 
     private enum JobKind {
@@ -1205,16 +1575,19 @@ public final class VillageManager {
         UPGRADE
     }
 
-    private record JobKey(BuildingType type, JobKind kind) {
-    }
-
     private record BlockPos(int x, int y, int z) {
     }
 
+    private record BuildingHit(BuildingType type, int slotIndex, int level, String name) {
+    }
+
     private static final class ConstructionJob {
-        private final JobKey key;
+        private final String id;
         private final BuildingType type;
+        private final JobKind kind;
         private final int slotIndex;
+        private final Integer customX;
+        private final Integer customZ;
         private final String worldName;
         private final String displayName;
         private final long endsAtMillis;
@@ -1222,12 +1595,38 @@ public final class VillageManager {
         private Villager builderNpc;
         private ArmorStand hologram;
 
-        private ConstructionJob(JobKey key, BuildingType type, int slotIndex, String worldName, String displayName, long endsAtMillis) {
-            this.key = key;
+        private ConstructionJob(String id, BuildingType type, JobKind kind, int slotIndex, Integer customX, Integer customZ,
+                                String worldName, String displayName, long endsAtMillis) {
+            this.id = id;
             this.type = type;
+            this.kind = kind;
             this.slotIndex = slotIndex;
+            this.customX = customX;
+            this.customZ = customZ;
             this.worldName = worldName;
             this.displayName = displayName;
+            this.endsAtMillis = endsAtMillis;
+        }
+    }
+
+    private static final class TrainingJob {
+        private final TroopType type;
+        private final long endsAtMillis;
+
+        private TrainingJob(TroopType type, long endsAtMillis) {
+            this.type = type;
+            this.endsAtMillis = endsAtMillis;
+        }
+    }
+
+    private static final class ResearchJob {
+        private final TroopType troop;
+        private final int nextLevel;
+        private final long endsAtMillis;
+
+        private ResearchJob(TroopType troop, int nextLevel, long endsAtMillis) {
+            this.troop = troop;
+            this.nextLevel = nextLevel;
             this.endsAtMillis = endsAtMillis;
         }
     }

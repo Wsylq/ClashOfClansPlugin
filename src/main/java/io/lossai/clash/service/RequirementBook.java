@@ -31,6 +31,9 @@ public final class RequirementBook {
         th1.put(BuildingType.ARMY_CAMP, 1);
         th1.put(BuildingType.CANNON, 1);
         th1.put(BuildingType.ARCHER_TOWER, 1);
+        th1.put(BuildingType.GOLD_STORAGE, 1);
+        th1.put(BuildingType.ELIXIR_STORAGE, 1);
+        th1.put(BuildingType.LABORATORY, 1);
         editable.put(1, Collections.unmodifiableMap(th1));
 
         REQUIREMENTS = Collections.unmodifiableMap(editable);

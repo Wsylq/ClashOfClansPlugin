@@ -2,9 +2,6 @@ package io.lossai.clash.service;
 
 import io.lossai.clash.model.BuildingType;
 
-import java.util.EnumMap;
-import java.util.Map;
-
 public final class BalanceBook {
 
     public enum Currency {
@@ -23,57 +20,61 @@ public final class BalanceBook {
     }
 
     public static int maxAtTownHall(BuildingType type, int townHallLevel) {
-        int clamped = Math.max(0, Math.min(2, townHallLevel));
+        int th = Math.max(0, Math.min(2, townHallLevel));
         return switch (type) {
-            case BUILDER_HUT -> clamped == 0 ? 1 : (clamped == 1 ? 2 : 3);
-            case GOLD_MINE -> clamped == 0 ? 1 : (clamped == 1 ? 2 : 3);
-            case ELIXIR_COLLECTOR -> clamped <= 1 ? 1 : 2;
-            case BARRACKS -> clamped >= 1 ? 1 : 0;
-            case ARMY_CAMP -> clamped >= 1 ? 1 : 0;
-            case CANNON -> clamped >= 1 ? 1 : 0;
-            case ARCHER_TOWER -> clamped >= 1 ? 1 : 0;
+            case BUILDER_HUT -> th == 0 ? 1 : (th == 1 ? 2 : 3);
+            case GOLD_MINE -> th == 0 ? 1 : (th == 1 ? 2 : 3);
+            case ELIXIR_COLLECTOR -> th <= 1 ? 1 : 2;
+            case GOLD_STORAGE, ELIXIR_STORAGE -> th >= 1 ? 1 : 0;
+            case BARRACKS, ARMY_CAMP, CANNON, ARCHER_TOWER, LABORATORY -> th >= 1 ? 1 : 0;
+            case WALL -> th == 0 ? 8 : (th == 1 ? 20 : 40);
         };
     }
 
     public static BuildInfo buildInfo(BuildingType type, int existingCount, int townHallLevel) {
         if (type == BuildingType.BUILDER_HUT) {
-            int nextHutNumber = existingCount + 1;
-            long gems = builderHutGemCost(nextHutNumber);
-            return new BuildInfo(Currency.GEMS, gems, 10);
+            return new BuildInfo(Currency.GEMS, builderHutGemCost(existingCount + 1), 10);
         }
-
         if (type == BuildingType.ELIXIR_COLLECTOR && townHallLevel <= 1) {
-            // User-requested TH1 data: 150 gold and 10 seconds for the collector.
             return new BuildInfo(Currency.GOLD, 150L, 10);
         }
-
         if (type == BuildingType.GOLD_MINE && townHallLevel <= 1) {
             return new BuildInfo(Currency.ELIXIR, 150L, 10);
         }
-
-        Map<BuildingType, BuildInfo> defaults = new EnumMap<>(BuildingType.class);
-        defaults.put(BuildingType.BARRACKS, new BuildInfo(Currency.ELIXIR, 200L, 20));
-        defaults.put(BuildingType.ARMY_CAMP, new BuildInfo(Currency.ELIXIR, 250L, 25));
-        defaults.put(BuildingType.CANNON, new BuildInfo(Currency.GOLD, 250L, 20));
-        defaults.put(BuildingType.ARCHER_TOWER, new BuildInfo(Currency.GOLD, 500L, 30));
-
-        return defaults.getOrDefault(type, new BuildInfo(Currency.GOLD, 0L, 1));
+        return switch (type) {
+            case GOLD_STORAGE -> new BuildInfo(Currency.GOLD, 300L, 15);
+            case ELIXIR_STORAGE -> new BuildInfo(Currency.ELIXIR, 300L, 15);
+            case BARRACKS -> new BuildInfo(Currency.ELIXIR, 200L, 20);
+            case ARMY_CAMP -> new BuildInfo(Currency.ELIXIR, 250L, 25);
+            case CANNON -> new BuildInfo(Currency.GOLD, 250L, 20);
+            case ARCHER_TOWER -> new BuildInfo(Currency.GOLD, 500L, 30);
+            case LABORATORY -> new BuildInfo(Currency.ELIXIR, 500L, 30);
+            case WALL -> new BuildInfo(Currency.GOLD, 50L, 2);
+            default -> new BuildInfo(Currency.GOLD, 100L, 10);
+        };
     }
 
     public static UpgradeInfo upgradeInfo(BuildingType type, int currentLevel, int townHallLevel) {
+        if (currentLevel <= 0) {
+            return null;
+        }
         if (type == BuildingType.ELIXIR_COLLECTOR && currentLevel == 1 && townHallLevel >= 1) {
             return new UpgradeInfo(Currency.GOLD, 300L, 15, 2);
         }
-
         if (type == BuildingType.GOLD_MINE && currentLevel == 1 && townHallLevel >= 1) {
             return new UpgradeInfo(Currency.ELIXIR, 300L, 15, 2);
         }
-
+        if (type == BuildingType.GOLD_STORAGE && currentLevel == 1 && townHallLevel >= 1) {
+            return new UpgradeInfo(Currency.GOLD, 350L, 20, 2);
+        }
+        if (type == BuildingType.ELIXIR_STORAGE && currentLevel == 1 && townHallLevel >= 1) {
+            return new UpgradeInfo(Currency.ELIXIR, 350L, 20, 2);
+        }
         return null;
     }
 
-    private static long builderHutGemCost(int builderHutNumber) {
-        return switch (builderHutNumber) {
+    private static long builderHutGemCost(int number) {
+        return switch (number) {
             case 1 -> 0;
             case 2 -> 250;
             case 3 -> 500;
