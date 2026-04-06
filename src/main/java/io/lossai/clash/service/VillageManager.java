@@ -4,6 +4,7 @@ import io.lossai.clash.model.BuildingType;
 import io.lossai.clash.model.TroopType;
 import io.lossai.clash.model.VillageData;
 import io.lossai.clash.storage.VillageStore;
+import net.citizensnpcs.api.npc.NPC;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.GameRule;
@@ -64,6 +65,12 @@ public final class VillageManager {
     private static final int SCENERY_RADIUS = 56;
     private static final int ARMY_CAP_PER_CAMP = 20;
 
+    private static final String BARBARIAN_TEXTURE =
+        "ewogICJ0aW1lc3RhbXAiIDogMTc3NTQ2ODY1MzYyOCwKICAicHJvZmlsZUlkIiA6ICI4YmM3MjdlYThjZjA0YWUzYTI4MDVhY2YzNjRjMmQyNCIsCiAgInByb2ZpbGVOYW1lIiA6ICJub3RpbnZlbnRpdmUiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZDIyN2ZlZDhjMTI2MzA2ZDM5Mzg0OTVhYmZhYzFmMWE2NGYzN2FiZjYyZTQ2OWMzYzk2OTdkMDRlZDk4NjA1NCIKICAgIH0KICB9Cn0=";
+
+    private static final String BARBARIAN_SIGNATURE =
+        "T6znl3CevzgqiaEvL/MJYXMXXJC4W5Q2WMTrkkUYxWIxvDr8g9zEviUAtcFiUOMwV7PP6AZU2OPAwTBHQbYPt9HD6YRUBQBRMR1X2vEXyDFBi05SzT0RWTNO9IDaVe0eCvue47Y9Kk1dzj19L9jw6dGy58x4ME6oXWk6WCdamtot3O9mcV4Pm1riyLAP1P2GCx4v/mgdrfBFe8ZlTHy56RSeZX7wIZTdRYHTxf//EPRUfplFm40xWQZ5+siCvlO3Q/AOtlWulIGXDHHud42OPvOKc9QgGCnTmMQfGHsCcTztbmZiE4wzfJPwmnZ0o6N/wO0A3e1LKqYSul6g7r+Gx6vQrEbdmPniZluspQQJGp1hX5xkEwaO26gR+asyxdjhH3ueioeKlNPquXn8t0FSHxhivR2HB6775BWVZkxb5QFCo796Y/NaFuQ5QZ9PNMGG1VuLQOoND68pZgaFaZkBvB6HYW3+UeU/LVlSi4j6glBwqPj4ROOhveldm+MqwBB9RmjxVFeHc3IN0MYPpGDke0Xg7jqwuvC0HljuXj7sccYdmEgQUlPD9PuP6v4nyKUbk1s4AmBZeQSLAFWLYzENlaSzxtYM1eFFTsKnAryE3Wh6OpfFsvdUn+DznkQH6VGcHUUPN8m6mq/thGqyjTPIpmRshI8kD7KqlA44bAO0whg=";
+
     private static final Set<Material> OBSTACLE_BLOCKS = EnumSet.of(
             Material.OAK_LOG, Material.OAK_LEAVES, Material.AZALEA_LEAVES,
             Material.FLOWERING_AZALEA_LEAVES, Material.COBBLESTONE, Material.MOSSY_COBBLESTONE, Material.STONE
@@ -78,7 +85,8 @@ public final class VillageManager {
     private final Map<UUID, Map<String, ConstructionJob>> activeJobs = new HashMap<>();
     private final Map<UUID, List<TrainingJob>> trainingJobs = new HashMap<>();
     private final Map<UUID, ResearchJob> activeResearch = new HashMap<>();
-    private final Map<UUID, Location> overviewReturnLocations = new HashMap<>();
+    private final Map<UUID, OverviewSession> overviewSessions = new HashMap<>();
+    private final Map<UUID, List<NPC>> troopVisualEntities = new HashMap<>();
 
     public VillageManager(JavaPlugin plugin, VillageStore store) {
         this.plugin = plugin;
@@ -342,7 +350,12 @@ public final class VillageManager {
             return ChatColor.RED + "Could not load world.";
         }
 
-        overviewReturnLocations.put(player.getUniqueId(), player.getLocation().clone());
+        boolean wasAllowFlight = player.getAllowFlight();
+        boolean wasFlying = player.isFlying();
+        overviewSessions.put(player.getUniqueId(),
+                new OverviewSession(player.getLocation().clone(), wasAllowFlight, wasFlying));
+        player.setAllowFlight(true);
+        player.setFlying(true);
         Location topDown = new Location(world, 0.5, GROUND_Y + 55.0, 0.5, -180f, 90f);
         player.teleportAsync(topDown);
         player.sendMessage(ChatColor.AQUA + "Base overview enabled. Use /clash overview exit to return.");
@@ -351,9 +364,9 @@ public final class VillageManager {
     }
 
     public String closeOverview(Player player) {
-        Location returnLocation = overviewReturnLocations.remove(player.getUniqueId());
+        OverviewSession session = overviewSessions.remove(player.getUniqueId());
         VillageData village = villages.get(player.getUniqueId());
-        if (returnLocation == null) {
+        if (session == null) {
             if (village != null) {
                 World world = Bukkit.getWorld(village.getWorldName());
                 if (world != null) {
@@ -362,7 +375,9 @@ public final class VillageManager {
             }
             return ChatColor.YELLOW + "Overview was not active.";
         }
-        player.teleportAsync(returnLocation);
+        player.setAllowFlight(session.wasAllowFlight());
+        player.setFlying(session.wasFlying());
+        player.teleportAsync(session.returnLocation());
         return ChatColor.GREEN + "Returned from overview.";
     }
 
@@ -699,6 +714,10 @@ public final class VillageManager {
                 trained++;
             }
             if (trained > 0) {
+                World world = Bukkit.getWorld(village.getWorldName());
+                if (world != null) {
+                    spawnTroopVisuals(world, village);
+                }
                 Player owner = Bukkit.getPlayer(entry.getKey());
                 if (owner != null) {
                     owner.sendMessage(ChatColor.GREEN + "Troops ready: +" + trained);
@@ -832,6 +851,11 @@ public final class VillageManager {
                 clearJobVisual(job);
             }
         }
+        // Remove all troop visual entities
+        for (List<NPC> npcs : troopVisualEntities.values()) {
+            npcs.forEach(NPC::destroy);
+        }
+        troopVisualEntities.clear();
         store.saveAll(villages);
     }
 
@@ -1056,6 +1080,7 @@ public final class VillageManager {
             placeBuildings(world, village, entry.getKey(), entry.getValue(), village.getBuildingLevel(entry.getKey()));
         }
         refreshCollectorVisuals(village);
+        spawnTroopVisuals(world, village);
     }
 
     private void renderAllConstruction(UUID playerId, World world) {
@@ -1302,6 +1327,100 @@ public final class VillageManager {
             int[] slot = slotList(BuildingType.ELIXIR_COLLECTOR).get(i);
             updateCollectorFillVisual(world, slot[0], slot[1], i, village);
         }
+    }
+
+    private void spawnTroopVisuals(World world, VillageData village) {
+        UUID id = village.getPlayerId();
+
+        // Clear old NPCs
+        List<NPC> old = troopVisualEntities.remove(id);
+        if (old != null) {
+            for (NPC npc : old) {
+                npc.destroy();
+            }
+        }
+
+        // Guard: Citizens must be available
+        if (!Bukkit.getPluginManager().isPluginEnabled("Citizens")) return;
+
+        // Guard: need at least one camp and one troop
+        int campCount = village.getBuildingCount(BuildingType.ARMY_CAMP);
+        if (campCount <= 0) return;
+
+        int totalTroops = village.getTroopsSnapshot().values().stream().mapToInt(Integer::intValue).sum();
+        if (totalTroops <= 0) return;
+
+        List<int[]> campSlots = slotList(BuildingType.ARMY_CAMP).subList(0, campCount);
+        int totalToSpawn = Math.min(totalTroops, campCount * ARMY_CAP_PER_CAMP);
+
+        // Distribute across camps (fewest-first round-robin)
+        int[] perCamp = new int[campCount];
+        for (int i = 0; i < totalToSpawn; i++) {
+            int minIdx = 0;
+            for (int c = 1; c < campCount; c++) {
+                if (perCamp[c] < perCamp[minIdx]) minIdx = c;
+            }
+            if (perCamp[minIdx] >= ARMY_CAP_PER_CAMP) break;
+            perCamp[minIdx]++;
+        }
+
+        // Build ordered list of TroopTypes to assign to each entity
+        List<TroopType> troopAssignments = new ArrayList<>();
+        for (TroopType type : TroopType.values()) {
+            int count = village.getTroopCount(type);
+            for (int i = 0; i < count && troopAssignments.size() < totalToSpawn; i++) {
+                troopAssignments.add(type);
+            }
+        }
+
+        // Spawn NPCs
+        List<NPC> spawned = new ArrayList<>();
+        Random rng = new Random();
+        int assignIdx = 0;
+        net.citizensnpcs.api.npc.NPCRegistry registry = net.citizensnpcs.api.CitizensAPI.getNPCRegistry();
+        for (int c = 0; c < campCount; c++) {
+            int[] slot = campSlots.get(c);
+            for (int i = 0; i < perCamp[c]; i++) {
+                double ox = (rng.nextDouble() * 6.0) - 3.0;
+                double oz = (rng.nextDouble() * 6.0) - 3.0;
+                Location loc = new Location(world, slot[0] + ox + 0.5, GROUND_Y + 1, slot[1] + oz + 0.5);
+                TroopType assignedType = assignIdx < troopAssignments.size() ? troopAssignments.get(assignIdx++) : TroopType.values()[0];
+
+                NPC npc = registry.createNPC(org.bukkit.entity.EntityType.PLAYER, " ");
+                npc.data().set(NPC.Metadata.NAMEPLATE_VISIBLE, false);
+                npc.data().set(NPC.Metadata.COLLIDABLE, false);
+
+                // Apply skin before spawning so it takes effect on first spawn
+                if (assignedType == TroopType.BARBARIAN) {
+                    net.citizensnpcs.trait.SkinTrait skinTrait = npc.getOrAddTrait(net.citizensnpcs.trait.SkinTrait.class);
+                    skinTrait.setSkinPersistent("clash_barbarian", BARBARIAN_SIGNATURE, BARBARIAN_TEXTURE);
+                }
+
+                npc.spawn(loc);
+
+                // Schedule random wandering within camp bounds
+                final int campX = slot[0];
+                final int campZ = slot[1];
+                final NPC finalNpc = npc;
+                Bukkit.getScheduler().runTaskTimer(plugin, task -> {
+                    if (finalNpc.isSpawned()) {
+                        Random r = new Random();
+                        double wx = campX + (r.nextDouble() * 6.0) - 3.0 + 0.5;
+                        double wz = campZ + (r.nextDouble() * 6.0) - 3.0 + 0.5;
+                        Location target = new Location(world, wx, GROUND_Y + 1, wz);
+                        finalNpc.getNavigator().setTarget(target);
+                    } else {
+                        task.cancel();
+                    }
+                }, 20L, 60L);
+                spawned.add(npc);
+            }
+        }
+        troopVisualEntities.put(id, spawned);
+    }
+
+    private void applyTroopSkin(ArmorStand stand, TroopType type) {
+        // no-op — skin is applied via Citizens SkinTrait in spawnTroopVisuals
     }
 
     private void updateMineFillVisual(World world, int cx, int cz, int slotIndex, VillageData village) {
@@ -1788,6 +1907,8 @@ public final class VillageManager {
         }
         return Collections.unmodifiableList(slots);
     }
+
+    private record OverviewSession(Location returnLocation, boolean wasAllowFlight, boolean wasFlying) {}
 
     private static final class VillageOverviewRenderer extends MapRenderer {
         private final VillageData village;

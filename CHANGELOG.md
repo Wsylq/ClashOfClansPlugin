@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0] - 2026-04-07
+
+### Added
+- Citizens NPC troop visuals spawned at Army Camp footprint, reflecting current trained troop count (capped at `ARMY_CAP_PER_CAMP` per camp)
+- NPCs wander randomly within the army camp bounds via navigator scheduler
+- Barbarian troop visuals display the correct custom skin via Citizens `SkinTrait.setSkinPersistent` with mineskin texture + RSA signature
+- Citizens added as a `softdepend` — plugin loads with or without it
+
+### Fixed
+- Overview mode (`/clash overview`) now enables flight on open and restores the player's original `allowFlight` and `flying` state on exit, preventing fall damage
+- Troop visuals now refresh immediately when training completes, not only on next `renderVillage` call
+
+
 ## [0.4.0] - 2026-04-05
 
 ### Added
