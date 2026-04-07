@@ -1,5 +1,5 @@
 name: ClashVillages
-version: 1.0.2
+version: 1.0.3
 main: io.lossai.clash.ClashPlugin
 api-version: '1.21'
 author: lossai

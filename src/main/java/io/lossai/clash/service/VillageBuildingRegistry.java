@@ -50,6 +50,9 @@ public class VillageBuildingRegistry implements BuildingRegistry {
     /** Live HP per building id. */
     private final Map<UUID, Integer> buildingHp = new HashMap<>();
 
+    private HealthBarManager healthBarManager;
+    private UUID sessionId;
+
     /**
      * @param world   the village world (coc_<uuid-prefix>)
      * @param village the village data (used to read building counts)
@@ -117,12 +120,18 @@ public class VillageBuildingRegistry implements BuildingRegistry {
                     8, 0.3, 0.3, 0.3, 0.1);
         }
 
+        if (healthBarManager != null) {
+            healthBarManager.register(instance, config.getHp(instance.type()), sessionId);
+            healthBarManager.damage(instance, newHp, config.getHp(instance.type()));
+        }
+
         if (newHp <= 0) {
             destroyBuilding(instance);
         }
     }
 
     private void destroyBuilding(BuildingInstance instance) {
+        if (healthBarManager != null) healthBarManager.remove(instance);
         Location origin = instance.origin();
         if (origin.getWorld() != null) {
             clearBlocks(instance);
@@ -145,5 +154,18 @@ public class VillageBuildingRegistry implements BuildingRegistry {
     /** Returns the current HP of a building, or -1 if not tracked. */
     public int getBuildingHp(BuildingInstance instance) {
         return buildingHp.getOrDefault(instance.id(), -1);
+    }
+
+    @Override
+    public int getHp(BuildingInstance instance) {
+        return getBuildingHp(instance);
+    }
+
+    public void setHealthBarManager(HealthBarManager hbm) {
+        this.healthBarManager = hbm;
+    }
+
+    public void setSessionId(UUID id) {
+        this.sessionId = id;
     }
 }

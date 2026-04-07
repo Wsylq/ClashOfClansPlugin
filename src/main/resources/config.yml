@@ -1,3 +1,8 @@
+health-bar:
+  bar-length: 10
+  decay-delay-ticks: 60
+  display-interval-ticks: 2
+
 barbarian-system:
   building-hp:
     townhall: 300

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.0] - 2026-04-07
+
+### Added
+- `HealthBarManager` — floating health bars above buildings and troops using invisible ArmorStand entities; bars decay and hide after 60 ticks of no damage
+- `HealthBarRenderer` — pure utility class for colored block-character bars (`█`/`░`) with green/yellow/red thresholds
+- `HealthBarConfig` — reads `health-bar` section from `config.yml`; falls back to defaults (`bar-length: 10`, `decay-delay-ticks: 60`, `display-interval-ticks: 2`) with warnings
+- `EntityDamageEvent` handler in `AttackListener` — updates NPC health bars when defense towers deal damage
+
+### Fixed
+- ArmorStand label showing "Armor Stand" instead of health bar — switched from legacy `setCustomName(String)` to Adventure `customName(Component)` API required by Paper 1.21
+- Health bars stacking from previous sessions — `sessionId` now threaded through all `register()` calls so `clearSession()` correctly removes all stands on session end
+- Decay hiding showing "Armor Stand" label — changed from setting name to `""` to `setCustomNameVisible(false)`
+- Buildings showing no health bar — `TestBaseRegistry.setHealthBarManager()` was never called; fixed in `BarbManager.startAttackSession()`
+- Health bar position too high on troops — reduced Y offset from `2.5` to `2.1` blocks above feet
+
+---
+
 ## [0.7.0] - 2026-04-07
 
 ### Added

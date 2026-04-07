@@ -39,6 +39,7 @@ public class BarbAI {
     private BuildingInstance target;
     private int attackTickCounter = 0;
     private BukkitTask task;
+    private HealthBarManager healthBarManager;
 
     public BarbAI(ClashPlugin plugin, NPC npc, BuildingRegistry registry) {
         this.plugin = plugin;
@@ -46,6 +47,10 @@ public class BarbAI {
         this.registry = registry;
         this.damage = plugin.getBarbConfig().getDamage();
         this.attackIntervalTicks = plugin.getBarbConfig().getAttackIntervalTicks();
+    }
+
+    public void setHealthBarManager(HealthBarManager healthBarManager) {
+        this.healthBarManager = healthBarManager;
     }
 
     // -----------------------------------------------------------------------
@@ -80,7 +85,12 @@ public class BarbAI {
 
     public void tick() {
         Entity entity = npc.getEntity();
-        if (entity == null) { state = State.IDLE; stop(); return; }
+        if (entity == null) {
+            state = State.IDLE;
+            if (healthBarManager != null) healthBarManager.remove(npc);
+            stop();
+            return;
+        }
 
         switch (state) {
             case SEEKING  -> tickSeeking(entity);
@@ -159,12 +169,16 @@ public class BarbAI {
         }
 
         if (!alive) {
+            if (healthBarManager != null) healthBarManager.remove(target);
             target = selectTarget();
             if (target == null) {
                 state = State.IDLE;
                 stop();
                 plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
-                    if (npc.isSpawned()) npc.despawn();
+                    if (npc.isSpawned()) {
+                        if (healthBarManager != null) healthBarManager.remove(npc);
+                        npc.despawn();
+                    }
                 }, 60L);
             } else {
                 attackTickCounter = 0;

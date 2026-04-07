@@ -10,6 +10,8 @@ import io.lossai.clash.listener.VillageInteractListener;
 import io.lossai.clash.listener.VillageWorldProtectionListener;
 import io.lossai.clash.service.BarbConfig;
 import io.lossai.clash.service.BarbManager;
+import io.lossai.clash.service.HealthBarConfig;
+import io.lossai.clash.service.HealthBarManager;
 import io.lossai.clash.service.TestBaseManager;
 import io.lossai.clash.service.VillageManager;
 import io.lossai.clash.storage.VillageStore;
@@ -23,6 +25,7 @@ public final class ClashPlugin extends JavaPlugin {
     private BarbManager barbManager;
     private BarbConfig barbConfig;
     private TestBaseManager testBaseManager;
+    private HealthBarManager healthBarManager;
 
     @Override
     public void onEnable() {
@@ -31,6 +34,7 @@ public final class ClashPlugin extends JavaPlugin {
 
         saveDefaultConfig();
         this.barbConfig = BarbConfig.load(getConfig(), getLogger());
+        HealthBarConfig healthBarConfig = HealthBarConfig.load(getConfig(), getLogger());
 
         getServer().getPluginManager().registerEvents(new PlayerJoinListener(this, villageManager), this);
         getServer().getPluginManager().registerEvents(new VillageWorldProtectionListener(villageManager), this);
@@ -61,6 +65,9 @@ public final class ClashPlugin extends JavaPlugin {
             barbManager.setVillageManager(villageManager);
             barbManager.setTestBaseManager(testBaseManager);
 
+            this.healthBarManager = new HealthBarManager(this, healthBarConfig);
+            barbManager.setHealthBarManager(healthBarManager);
+
             getServer().getPluginManager().registerEvents(new AttackListener(this, barbManager), this);
 
             PluginCommand barbCommand = getCommand("barbarian");
@@ -87,6 +94,9 @@ public final class ClashPlugin extends JavaPlugin {
         if (barbManager != null) {
             barbManager.clear();
         }
+        if (healthBarManager != null) {
+            healthBarManager.shutdown();
+        }
     }
 
     public BarbConfig getBarbConfig() {
@@ -99,6 +109,10 @@ public final class ClashPlugin extends JavaPlugin {
 
     public TestBaseManager getTestBaseManager() {
         return testBaseManager;
+    }
+
+    public HealthBarManager getHealthBarManager() {
+        return healthBarManager;
     }
 
     public void reloadBarbConfig() {

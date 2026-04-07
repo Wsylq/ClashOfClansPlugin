@@ -49,6 +49,10 @@ public class BarbManager {
     private final ClashPlugin plugin;
     private VillageManager villageManager;
     private TestBaseManager testBaseManager;
+    private HealthBarManager healthBarManager;
+
+    /** Max HP for a barbarian troop (standard CoC value). */
+    private static final int BARBARIAN_MAX_HP = 45;
 
     public BarbManager(ClashPlugin plugin) {
         this.plugin = plugin;
@@ -62,6 +66,10 @@ public class BarbManager {
 
     public void setTestBaseManager(TestBaseManager testBaseManager) {
         this.testBaseManager = testBaseManager;
+    }
+
+    public void setHealthBarManager(HealthBarManager healthBarManager) {
+        this.healthBarManager = healthBarManager;
     }
 
     // -----------------------------------------------------------------------
@@ -99,6 +107,12 @@ public class BarbManager {
         if (registry == null) {
             player.sendMessage(ChatColor.RED + "Could not load test base world.");
             return;
+        }
+
+        // Wire health bar manager into the registry so buildings show health bars
+        if (healthBarManager != null) {
+            registry.setHealthBarManager(healthBarManager);
+            registry.setSessionId(player.getUniqueId());
         }
 
         // Deduct troops from village
@@ -144,6 +158,11 @@ public class BarbManager {
         ai.start();
         activeBarbs.put(npc.getId(), ai);
 
+        if (healthBarManager != null) {
+            ai.setHealthBarManager(healthBarManager);
+            healthBarManager.register(npc, BARBARIAN_MAX_HP, player.getUniqueId());
+        }
+
         // Track this NPC for defeat detection
         java.util.Set<Integer> ids = sessionNpcIds.get(player.getUniqueId());
         if (ids != null) ids.add(npc.getId());
@@ -163,9 +182,11 @@ public class BarbManager {
      * Ends the attack session, removes the barbarian head item, and clears NPCs.
      */
     public void endSession(Player player) {
-        sessions.remove(player.getUniqueId());
-        sessionNpcIds.remove(player.getUniqueId());
-        if (testBaseManager != null) testBaseManager.setActiveRegistry(player.getUniqueId(), null);
+        UUID playerUuid = player.getUniqueId();
+        sessions.remove(playerUuid);
+        sessionNpcIds.remove(playerUuid);
+        if (testBaseManager != null) testBaseManager.setActiveRegistry(playerUuid, null);
+        if (healthBarManager != null) healthBarManager.clearSession(playerUuid);
         removeBarbHeadItem(player);
         player.sendMessage(ChatColor.GOLD + "Attack session ended.");
     }

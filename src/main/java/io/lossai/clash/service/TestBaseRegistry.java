@@ -9,6 +9,7 @@ import org.bukkit.Sound;
 import org.bukkit.World;
 
 import java.util.*;
+import java.util.UUID;
 
 /**
  * BuildingRegistry backed by the static test enemy base.
@@ -32,9 +33,13 @@ public final class TestBaseRegistry implements BuildingRegistry {
     private final World world;
     private final List<BuildingInstance> allBuildings;
     private final Map<UUID, Integer> buildingHp = new HashMap<>();
+    private HealthBarManager healthBarManager;
+    private BarbConfig barbConfig;
+    private UUID sessionId;  // set by BarbManager so clearSession works
 
     public TestBaseRegistry(World world, Map<BuildingType, int[]> positions, BarbConfig config) {
         this.world = world;
+        this.barbConfig = config;
         this.allBuildings = buildInstances(positions, config);
     }
 
@@ -72,10 +77,18 @@ public final class TestBaseRegistry implements BuildingRegistry {
             origin.getWorld().spawnParticle(Particle.CRIT,
                     origin.clone().add(0.5, 1.0, 0.5), 8, 0.3, 0.3, 0.3, 0.1);
         }
+
+        if (healthBarManager != null) {
+            int maxHp = barbConfig != null ? barbConfig.getHp(instance.type()) : newHp;
+            healthBarManager.register(instance, maxHp, sessionId);
+            healthBarManager.damage(instance, newHp, maxHp);
+        }
+
         if (newHp <= 0) destroyBuilding(instance);
     }
 
     private void destroyBuilding(BuildingInstance instance) {
+        if (healthBarManager != null) healthBarManager.remove(instance);
         Location origin = instance.origin();
         if (origin.getWorld() != null) {
             clearBlocks(instance);
@@ -106,5 +119,18 @@ public final class TestBaseRegistry implements BuildingRegistry {
             if (inst.type() == type && buildingHp.getOrDefault(inst.id(), 0) > 0) return true;
         }
         return false;
+    }
+
+    @Override
+    public int getHp(BuildingInstance instance) {
+        return buildingHp.getOrDefault(instance.id(), -1);
+    }
+
+    public void setHealthBarManager(HealthBarManager hbm) {
+        this.healthBarManager = hbm;
+    }
+
+    public void setSessionId(UUID id) {
+        this.sessionId = id;
     }
 }
