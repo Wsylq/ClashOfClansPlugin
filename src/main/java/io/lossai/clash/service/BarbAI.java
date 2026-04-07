@@ -13,14 +13,20 @@ import java.util.List;
 
 /**
  * Per-NPC behaviour controller for a Barbarian.
- * Drives a SEEKING → ATTACKING → IDLE state machine via a repeating BukkitTask.
  *
- * Talks only to {@link BuildingRegistry} — has no knowledge of villages,
- * test bases, or any other concrete building source.
+ * Movement uses incremental teleportation every tick — Citizens2 velocity and
+ * navigator APIs are both unreliable for static block targets on flat worlds.
+ * Teleporting the underlying entity directly is the only approach that always works.
  */
 public class BarbAI {
 
     public enum State { SEEKING, ATTACKING, IDLE }
+
+    /** Blocks moved per tick while seeking (≈ 0.45 b/t = ~9 b/s, feels like a sprinting player) */
+    private static final double MOVE_SPEED = 0.45;
+
+    /** Horizontal distance at which the barb stops moving and starts attacking */
+    private static final double ATTACK_RANGE = 2.0;
 
     private final ClashPlugin plugin;
     private final NPC npc;
@@ -42,18 +48,24 @@ public class BarbAI {
         this.attackIntervalTicks = plugin.getBarbConfig().getAttackIntervalTicks();
     }
 
-    /** Picks the nearest surviving BuildingInstance by Euclidean distance. */
+    // -----------------------------------------------------------------------
+    // Target selection
+    // -----------------------------------------------------------------------
+
     public BuildingInstance selectTarget() {
         Entity entity = npc.getEntity();
         if (entity == null) return null;
 
         Location npcLoc = entity.getLocation();
-        List<BuildingInstance> survivors = registry.getSurvivingBuildings();
-
         BuildingInstance nearest = null;
         double nearestDistSq = Double.MAX_VALUE;
-        for (BuildingInstance inst : survivors) {
-            double d = npcLoc.distanceSquared(inst.origin());
+
+        for (BuildingInstance inst : registry.getSurvivingBuildings()) {
+            Location origin = inst.origin();
+            if (origin.getWorld() == null || !origin.getWorld().equals(npcLoc.getWorld())) continue;
+            double dx = npcLoc.getX() - origin.getX();
+            double dz = npcLoc.getZ() - origin.getZ();
+            double d = dx * dx + dz * dz;
             if (d < nearestDistSq) {
                 nearestDistSq = d;
                 nearest = inst;
@@ -62,48 +74,75 @@ public class BarbAI {
         return nearest;
     }
 
-    /** Called every tick by the scheduler. Drives state transitions and attack cycles. */
+    // -----------------------------------------------------------------------
+    // Tick
+    // -----------------------------------------------------------------------
+
     public void tick() {
         Entity entity = npc.getEntity();
         if (entity == null) { state = State.IDLE; stop(); return; }
 
         switch (state) {
-            case SEEKING -> {
-                if (target == null) {
-                    target = selectTarget();
-                    if (target == null) { state = State.IDLE; stop(); return; }
-                    startNavigating();
-                }
-                if (entity.getLocation().distance(target.origin()) <= 2.0) {
-                    npc.getNavigator().cancelNavigation();
-                    attackTickCounter = 0;
-                    state = State.ATTACKING;
-                }
-            }
+            case SEEKING  -> tickSeeking(entity);
             case ATTACKING -> {
                 if (++attackTickCounter >= attackIntervalTicks) {
                     attackTickCounter = 0;
-                    executeAttack();
+                    executeAttack(entity);
                 }
             }
             case IDLE -> stop();
         }
     }
 
-    private void executeAttack() {
+    private void tickSeeking(Entity entity) {
         if (target == null) {
             target = selectTarget();
             if (target == null) { state = State.IDLE; stop(); return; }
-            startNavigating();
+        }
+
+        Location from = entity.getLocation();
+        Location to   = target.origin();
+
+        if (to.getWorld() == null || !to.getWorld().equals(from.getWorld())) {
+            target = selectTarget();
+            if (target == null) { state = State.IDLE; stop(); }
+            return;
+        }
+
+        double dx = to.getX() + 0.5 - from.getX();
+        double dz = to.getZ() + 0.5 - from.getZ();
+        double distSq = dx * dx + dz * dz;
+
+        if (distSq <= ATTACK_RANGE * ATTACK_RANGE) {
+            attackTickCounter = 0;
+            state = State.ATTACKING;
+            return;
+        }
+
+        // Step toward target via teleport — immune to Citizens2 physics override
+        double len  = Math.sqrt(distSq);
+        double step = Math.min(MOVE_SPEED, len); // don't overshoot
+        double nx   = from.getX() + (dx / len) * step;
+        double nz   = from.getZ() + (dz / len) * step;
+        float  yaw  = (float) Math.toDegrees(Math.atan2(-dx, dz));
+
+        Location next = new Location(from.getWorld(), nx, from.getY(), nz, yaw, from.getPitch());
+        entity.teleport(next);
+    }
+
+    // -----------------------------------------------------------------------
+    // Attack
+    // -----------------------------------------------------------------------
+
+    private void executeAttack(Entity entity) {
+        if (target == null) {
+            target = selectTarget();
+            if (target == null) { state = State.IDLE; stop(); return; }
             state = State.SEEKING;
             return;
         }
 
-        Entity entity = npc.getEntity();
-        if (entity != null) {
-            entity.getWorld().playSound(
-                    entity.getLocation(), Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.0f, 1.0f);
-        }
+        entity.getWorld().playSound(entity.getLocation(), Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.0f, 1.0f);
 
         Location origin = target.origin();
         if (origin.getWorld() != null) {
@@ -113,46 +152,48 @@ public class BarbAI {
 
         registry.damageBuilding(target, damage);
 
-        // Re-select if target was destroyed
-        if (!registry.getSurvivingBuildings().contains(target)) {
+        // Check if target was destroyed
+        boolean alive = false;
+        for (BuildingInstance b : registry.getSurvivingBuildings()) {
+            if (b.id().equals(target.id())) { alive = true; break; }
+        }
+
+        if (!alive) {
             target = selectTarget();
             if (target == null) {
                 state = State.IDLE;
                 stop();
+                plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                    if (npc.isSpawned()) npc.despawn();
+                }, 60L);
             } else {
                 attackTickCounter = 0;
-                startNavigating();
                 state = State.SEEKING;
             }
         }
     }
 
-    private void startNavigating() {
-        if (target != null) npc.getNavigator().setTarget(target.origin());
-    }
+    // -----------------------------------------------------------------------
+    // Lifecycle
+    // -----------------------------------------------------------------------
 
-    /** Selects an initial target and starts the repeating tick task. */
     public void start() {
+        npc.getNavigator().cancelNavigation();
         target = selectTarget();
         if (target == null) { state = State.IDLE; return; }
         state = State.SEEKING;
-        startNavigating();
-        task = plugin.getServer().getScheduler().runTaskTimer(plugin, this::tick, 1L, 1L);
+        // Run every 2 ticks — smooth enough, half the server tick overhead of every-tick
+        task = plugin.getServer().getScheduler().runTaskTimer(plugin, this::tick, 1L, 2L);
     }
 
-    /** Cancels the tick task. */
     public void stop() {
         if (task != null && !task.isCancelled()) task.cancel();
     }
 
     // -----------------------------------------------------------------------
-    // Pure helper for property-based tests (no Bukkit dependency)
+    // Pure helper for property-based tests
     // -----------------------------------------------------------------------
 
-    /**
-     * Returns the index of the nearest [x,z] candidate to {@code fromXZ}.
-     * Returns -1 for an empty array.
-     */
     public static int indexOfNearest(double[] fromXZ, double[][] candidateXZ) {
         if (candidateXZ == null || candidateXZ.length == 0) return -1;
         int nearest = 0;

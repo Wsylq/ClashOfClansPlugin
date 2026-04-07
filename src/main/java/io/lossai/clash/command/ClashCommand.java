@@ -50,6 +50,7 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
             case "research" -> handleResearch(player, args);
             case "finish" -> handleFinish(player, args);
             case "reload" -> handleReload(player);
+            case "attack" -> handleAttack(player);
             default -> sendHelp(player);
         }
 
@@ -118,6 +119,7 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.GRAY + " - /clash train <troop> [amount]");
         player.sendMessage(ChatColor.GRAY + " - /clash research <troop>");
         player.sendMessage(ChatColor.GRAY + " - /clash finish <building|training|research>");
+        player.sendMessage(ChatColor.GRAY + " - /clash attack");
         player.sendMessage(ChatColor.GRAY + " - /clash reload");
     }
 
@@ -181,6 +183,14 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.GREEN + "ClashVillages config reloaded.");
     }
 
+    private void handleAttack(Player player) {
+        if (plugin.getBarbManager() == null) {
+            player.sendMessage(ChatColor.RED + "Barbarian system is not available (Citizens2 required).");
+            return;
+        }
+        plugin.getBarbManager().startAttackSession(player);
+    }
+
     private List<String> displayBuildingNames() {
         List<String> names = new ArrayList<>();
         for (BuildingType value : BuildingType.values()) {
@@ -196,7 +206,7 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 1) {
-            return filterByPrefix(List.of("tp", "village", "build", "upgrade", "collect", "overview", "train", "research", "finish", "reload"), args[0]);
+            return filterByPrefix(List.of("tp", "village", "build", "upgrade", "collect", "overview", "train", "research", "finish", "attack", "reload"), args[0]);
         }
 
         if (args.length == 2 && args[0].equalsIgnoreCase("overview")) {

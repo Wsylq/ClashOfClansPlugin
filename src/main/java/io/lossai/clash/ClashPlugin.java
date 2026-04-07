@@ -2,6 +2,7 @@ package io.lossai.clash;
 
 import io.lossai.clash.command.BarbCommand;
 import io.lossai.clash.command.ClashCommand;
+import io.lossai.clash.listener.AttackListener;
 import io.lossai.clash.listener.PlayerJoinListener;
 import io.lossai.clash.listener.InfoInventoryListener;
 import io.lossai.clash.listener.VillageBoundaryListener;
@@ -9,6 +10,7 @@ import io.lossai.clash.listener.VillageInteractListener;
 import io.lossai.clash.listener.VillageWorldProtectionListener;
 import io.lossai.clash.service.BarbConfig;
 import io.lossai.clash.service.BarbManager;
+import io.lossai.clash.service.TestBaseManager;
 import io.lossai.clash.service.VillageManager;
 import io.lossai.clash.storage.VillageStore;
 import org.bukkit.command.PluginCommand;
@@ -20,6 +22,7 @@ public final class ClashPlugin extends JavaPlugin {
     private VillageManager villageManager;
     private BarbManager barbManager;
     private BarbConfig barbConfig;
+    private TestBaseManager testBaseManager;
 
     @Override
     public void onEnable() {
@@ -53,8 +56,12 @@ public final class ClashPlugin extends JavaPlugin {
 
         // Barbarian system — requires Citizens2
         if (getServer().getPluginManager().getPlugin("Citizens") != null) {
+            this.testBaseManager = new TestBaseManager(this);
             this.barbManager = new BarbManager(this);
             barbManager.setVillageManager(villageManager);
+            barbManager.setTestBaseManager(testBaseManager);
+
+            getServer().getPluginManager().registerEvents(new AttackListener(this, barbManager), this);
 
             PluginCommand barbCommand = getCommand("barbarian");
             if (barbCommand != null) {
@@ -84,6 +91,14 @@ public final class ClashPlugin extends JavaPlugin {
 
     public BarbConfig getBarbConfig() {
         return barbConfig;
+    }
+
+    public BarbManager getBarbManager() {
+        return barbManager;
+    }
+
+    public TestBaseManager getTestBaseManager() {
+        return testBaseManager;
     }
 
     public void reloadBarbConfig() {

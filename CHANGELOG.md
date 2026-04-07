@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.7.0] - 2026-04-07
+
+### Added
+- `TestBaseManager` — creates and manages a shared `coc_testbase` flat world with a pre-built enemy base (Town Hall, Cannon, Archer Tower, Army Camp)
+- `TestBaseRegistry` — `BuildingRegistry` implementation backed by the static test base; tracks per-building HP in-memory per attack session; exposes `isBuildingAlive(type)` for defense checks
+- `AttackSession` — tracks one player's active raid: remaining deployable barbarians, the live registry, and deployed NPC ids
+- `AttackListener` — `PlayerInteractEvent` listener; right-clicking the Barbarian Head item deploys exactly one barbarian at the player's feet; blocks deployment outside `coc_testbase`
+- `/clash attack` subcommand — starts an attack session from anywhere (including own village), teleports player to test base, deducts trained barbarians, gives Barbarian Head item with count = army size
+- Barbarian Head deploy item — `PLAYER_HEAD` with custom lore tag as identifier; item count reflects remaining deployable barbarians and ticks down on each deploy
+- Self-attack prevention on `/barbarian deploy` (admin command) — checks world owner via `VillageManager.getWorldOwner()` and blocks if attacker is in their own village
+- Defense system for test base — cannon and archer tower fire arrows at barbarian NPCs every second; cannon range 16 blocks / 6 dmg, archer range 12 blocks / 3 dmg; both stop firing when their building is destroyed
+- Defeat condition — session ends with "Defeat!" when all deployed barbarians are dead and none remain to deploy
+- Victory condition — session ends with "Victory!" when all test base buildings are destroyed
+- `VillageManager.getWorldOwner(World)` — public method to resolve which player owns a given village world
+- `finishNow("training")` now calls `spawnTroopVisuals` immediately so barbarians appear around the army camp right after instant-finish
+
+### Changed
+- `BarbAI` movement completely rewritten — replaced Citizens2 navigator (unreliable for static block targets on flat worlds) with incremental teleportation every 2 ticks at 0.45 blocks/tick; barbarians now reliably walk to and attack every building in sequence
+- `BarbAI.selectTarget()` and SEEKING proximity check now use horizontal-only distance math instead of Bukkit `distance()`/`distanceSquared()` to avoid `IllegalArgumentException` when NPC and building are in different worlds
+- `BarbAI` post-kill re-target: after destroying a building, immediately selects next nearest and transitions back to SEEKING
+- `BarbManager` NPCs spawned with `npc.setProtected(false)` — required for external teleportation to work
+- `BarbManager` constructor starts a repeating session monitor task (every second) for victory/defeat detection
+- `ClashPlugin` wires up `TestBaseManager`, `AttackListener`, and passes `testBaseManager` to `BarbManager`
+- `TestBaseManager.tickDefense` checks `activeRegistries` to skip shooting from already-destroyed buildings
+
+### Fixed
+- `IllegalArgumentException: Cannot measure distance between coc_* and coc_testbase` — caused by Citizens2 NPC in test base world trying to measure distance to building origins registered in a different world object
+- Barbarians standing idle after destroying first building — Citizens2 navigator silently fails to pathfind to static block coordinates; fixed by switching to teleport-based movement
+- Cannon continuing to shoot after being destroyed — defense tick now checks `registry.isBuildingAlive()` before firing
+- Session ending immediately after all barbarians deployed — removed premature `endSession` call; session now only ends on victory or defeat
+- Troop visuals not appearing after `/clash finish training` — `finishNow` now triggers `spawnTroopVisuals` after adding troops
+
+---
+
 ## [0.6.0] - 2026-04-07
 
 ### Added

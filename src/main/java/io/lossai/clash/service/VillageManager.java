@@ -573,6 +573,8 @@ public final class VillageManager {
                 village.addTroops(job.type, 1);
             }
             queue.clear();
+            World world = getOrCreateVillageWorld(village);
+            if (world != null) spawnTroopVisuals(world, village);
             updateResourceHud(player, village);
             store.saveAll(villages);
             return ChatColor.GREEN + "Training finished instantly for " + gems + " gems.";
@@ -1768,6 +1770,15 @@ public final class VillageManager {
             }
         }
         return null;
+    }
+
+    /**
+     * Returns the UUID of the player who owns the given village world,
+     * or null if the world is not a player village (e.g. test base world).
+     */
+    public UUID getWorldOwner(org.bukkit.World world) {
+        if (world == null) return null;
+        return findOwnerByWorld(world.getName());
     }
 
     private boolean isScenery(Location location) {
