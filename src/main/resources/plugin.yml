@@ -1,5 +1,5 @@
 name: ClashVillages
-version: 1.0.1
+version: 1.0.2
 main: io.lossai.clash.ClashPlugin
 api-version: '1.21'
 author: lossai
@@ -9,6 +9,10 @@ commands:
     description: Clash villages main command
     usage: /clash
     aliases: [coc]
+  barbarian:
+    description: Deploy or clear barbarian NPCs
+    usage: /barbarian <deploy <count>|clear>
+    permission: clash.admin
 permissions:
   clash.admin:
     description: Allows managing other players in future expansions

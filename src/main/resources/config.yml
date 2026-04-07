@@ -1,0 +1,10 @@
+barbarian-system:
+  building-hp:
+    townhall: 300
+    cannon: 150
+    archer_tower: 120
+    gold_mine: 80
+    elixir_collector: 80
+    wall: 50
+  barbarian-damage: 10
+  attack-interval-ticks: 20

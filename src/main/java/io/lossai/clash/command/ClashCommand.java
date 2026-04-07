@@ -1,5 +1,6 @@
 package io.lossai.clash.command;
 
+import io.lossai.clash.ClashPlugin;
 import io.lossai.clash.model.BuildingType;
 import io.lossai.clash.model.TroopType;
 import io.lossai.clash.service.VillageManager;
@@ -18,9 +19,11 @@ import java.util.Locale;
 public final class ClashCommand implements CommandExecutor, TabCompleter {
 
     private final VillageManager villageManager;
+    private final ClashPlugin plugin;
 
-    public ClashCommand(VillageManager villageManager) {
+    public ClashCommand(VillageManager villageManager, ClashPlugin plugin) {
         this.villageManager = villageManager;
+        this.plugin = plugin;
     }
 
     @Override
@@ -46,6 +49,7 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
             case "train" -> handleTrain(player, args);
             case "research" -> handleResearch(player, args);
             case "finish" -> handleFinish(player, args);
+            case "reload" -> handleReload(player);
             default -> sendHelp(player);
         }
 
@@ -114,6 +118,7 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.GRAY + " - /clash train <troop> [amount]");
         player.sendMessage(ChatColor.GRAY + " - /clash research <troop>");
         player.sendMessage(ChatColor.GRAY + " - /clash finish <building|training|research>");
+        player.sendMessage(ChatColor.GRAY + " - /clash reload");
     }
 
     private void handleOverview(Player player, String[] args) {
@@ -167,6 +172,15 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(villageManager.finishNow(player, args[1]));
     }
 
+    private void handleReload(Player player) {
+        if (!player.hasPermission("clash.admin")) {
+            player.sendMessage(ChatColor.RED + "You don't have permission to reload the config.");
+            return;
+        }
+        plugin.reloadBarbConfig();
+        player.sendMessage(ChatColor.GREEN + "ClashVillages config reloaded.");
+    }
+
     private List<String> displayBuildingNames() {
         List<String> names = new ArrayList<>();
         for (BuildingType value : BuildingType.values()) {
@@ -182,7 +196,7 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 1) {
-            return filterByPrefix(List.of("tp", "village", "build", "upgrade", "collect", "overview", "train", "research", "finish"), args[0]);
+            return filterByPrefix(List.of("tp", "village", "build", "upgrade", "collect", "overview", "train", "research", "finish", "reload"), args[0]);
         }
 
         if (args.length == 2 && args[0].equalsIgnoreCase("overview")) {

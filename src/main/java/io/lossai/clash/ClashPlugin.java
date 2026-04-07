@@ -1,11 +1,14 @@
 package io.lossai.clash;
 
+import io.lossai.clash.command.BarbCommand;
 import io.lossai.clash.command.ClashCommand;
 import io.lossai.clash.listener.PlayerJoinListener;
 import io.lossai.clash.listener.InfoInventoryListener;
 import io.lossai.clash.listener.VillageBoundaryListener;
 import io.lossai.clash.listener.VillageInteractListener;
 import io.lossai.clash.listener.VillageWorldProtectionListener;
+import io.lossai.clash.service.BarbConfig;
+import io.lossai.clash.service.BarbManager;
 import io.lossai.clash.service.VillageManager;
 import io.lossai.clash.storage.VillageStore;
 import org.bukkit.command.PluginCommand;
@@ -15,11 +18,16 @@ public final class ClashPlugin extends JavaPlugin {
 
     private VillageStore villageStore;
     private VillageManager villageManager;
+    private BarbManager barbManager;
+    private BarbConfig barbConfig;
 
     @Override
     public void onEnable() {
         this.villageStore = new VillageStore(this);
         this.villageManager = new VillageManager(this, villageStore);
+
+        saveDefaultConfig();
+        this.barbConfig = BarbConfig.load(getConfig(), getLogger());
 
         getServer().getPluginManager().registerEvents(new PlayerJoinListener(this, villageManager), this);
         getServer().getPluginManager().registerEvents(new VillageWorldProtectionListener(villageManager), this);
@@ -34,18 +42,31 @@ public final class ClashPlugin extends JavaPlugin {
             return;
         }
 
-        ClashCommand executor = new ClashCommand(villageManager);
+        ClashCommand executor = new ClashCommand(villageManager, this);
         clashCommand.setExecutor(executor);
         clashCommand.setTabCompleter(executor);
 
-        // Resource generators tick every 5 seconds for online players.
         getServer().getScheduler().runTaskTimer(this, villageManager::tickResourceGeneration, 100L, 100L);
-        // Construction holograms and builder HUD are refreshed every second.
         getServer().getScheduler().runTaskTimer(this, villageManager::tickConstructionVisuals, 20L, 20L);
-        // Archer towers scan and fire every second.
         getServer().getScheduler().runTaskTimer(this, villageManager::tickArcherTowerDefense, 20L, 20L);
-        // Cannons scan, rotate, and fire every second.
         getServer().getScheduler().runTaskTimer(this, villageManager::tickCannonDefense, 20L, 20L);
+
+        // Barbarian system — requires Citizens2
+        if (getServer().getPluginManager().getPlugin("Citizens") != null) {
+            this.barbManager = new BarbManager(this);
+            barbManager.setVillageManager(villageManager);
+
+            PluginCommand barbCommand = getCommand("barbarian");
+            if (barbCommand != null) {
+                BarbCommand barbExecutor = new BarbCommand(barbManager);
+                barbCommand.setExecutor(barbExecutor);
+                barbCommand.setTabCompleter(barbExecutor);
+            }
+
+            getLogger().info("Barbarian system enabled (Citizens2 found).");
+        } else {
+            getLogger().warning("Citizens2 not found — barbarian system disabled.");
+        }
 
         getLogger().info("ClashVillages enabled.");
     }
@@ -56,5 +77,18 @@ public final class ClashPlugin extends JavaPlugin {
             villageManager.shutdown();
             villageStore.saveAll(villageManager.getVillageSnapshot());
         }
+        if (barbManager != null) {
+            barbManager.clear();
+        }
+    }
+
+    public BarbConfig getBarbConfig() {
+        return barbConfig;
+    }
+
+    public void reloadBarbConfig() {
+        reloadConfig();
+        this.barbConfig = BarbConfig.load(getConfig(), getLogger());
+        getLogger().info("BarbConfig reloaded.");
     }
 }

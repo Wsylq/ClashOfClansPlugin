@@ -1,8 +1,12 @@
 io\lossai\clash\service\BalanceBook.class
 io\lossai\clash\listener\VillageWorldProtectionListener.class
 io\lossai\clash\command\ClashCommand.class
+io\lossai\clash\service\BuildingRegistry.class
+io\lossai\clash\command\BarbCommand.class
 io\lossai\clash\service\VillageManager$BlockPos.class
 io\lossai\clash\service\VillageManager.class
+io\lossai\clash\service\VillageBuildingRegistry.class
+io\lossai\clash\service\BarbManager.class
 io\lossai\clash\service\TroopBook$1.class
 io\lossai\clash\service\VillageManager$ConstructionJob.class
 io\lossai\clash\service\VillageManager$ResearchJob.class
@@ -15,6 +19,9 @@ io\lossai\clash\model\VillageData.class
 io\lossai\clash\service\RequirementBook.class
 io\lossai\clash\service\BalanceBook$BuildInfo.class
 io\lossai\clash\service\BalanceBook$Currency.class
+io\lossai\clash\service\VillageManager$OverviewSession.class
+io\lossai\clash\model\BuildingInstance.class
+io\lossai\clash\service\BarbConfig.class
 io\lossai\clash\listener\VillageInteractListener.class
 io\lossai\clash\listener\PlayerJoinListener.class
 io\lossai\clash\service\VillageManager$1.class
@@ -22,6 +29,8 @@ io\lossai\clash\listener\InfoInventoryListener.class
 io\lossai\clash\model\TroopType.class
 io\lossai\clash\model\BuildingType.class
 io\lossai\clash\service\BalanceBook$1.class
+io\lossai\clash\service\BarbAI$State.class
+io\lossai\clash\service\BarbAI.class
 io\lossai\clash\service\VillageManager$BuildingHit.class
 io\lossai\clash\service\VillageManager$VillageOverviewRenderer.class
 io\lossai\clash\storage\VillageStore.class

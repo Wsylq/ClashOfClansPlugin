@@ -23,6 +23,7 @@ public final class BalanceBook {
         int th = Math.max(0, Math.min(2, townHallLevel));
         return switch (type) {
             case BUILDER_HUT -> th == 0 ? 1 : (th == 1 ? 2 : 3);
+            case TOWNHALL -> 1;
             case GOLD_MINE -> th == 0 ? 1 : (th == 1 ? 2 : 3);
             case ELIXIR_COLLECTOR -> th <= 1 ? 1 : 2;
             case GOLD_STORAGE, ELIXIR_STORAGE -> th >= 1 ? 1 : 0;

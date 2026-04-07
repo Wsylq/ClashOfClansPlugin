@@ -6,6 +6,7 @@ import java.util.Optional;
 
 public enum BuildingType {
     BUILDER_HUT,
+    TOWNHALL,
     GOLD_MINE,
     ELIXIR_COLLECTOR,
     GOLD_STORAGE,

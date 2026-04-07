@@ -6,7 +6,7 @@
 
     <groupId>io.lossai</groupId>
     <artifactId>clash-villages</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <name>ClashVillages</name>
     <description>Clash-of-Clans style progression plugin for Paper 1.21.x</description>
 

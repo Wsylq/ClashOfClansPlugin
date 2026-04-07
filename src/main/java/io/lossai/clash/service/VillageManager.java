@@ -134,6 +134,49 @@ public final class VillageManager {
         return Collections.unmodifiableMap(villages);
     }
 
+    /**
+     * Returns the static building-slot layout map.
+     * Used by {@link io.lossai.clash.service.VillageBuildingRegistry} to derive
+     * BuildingInstance locations without coupling to VillageManager internals.
+     */
+    public static Map<BuildingType, List<int[]>> getBuildingSlots() {
+        return BUILDING_SLOTS;
+    }
+
+    /**
+     * Finds the nearest player village whose world is loaded and within
+     * {@code radius} blocks of {@code loc}, and returns a
+     * {@link VillageBuildingRegistry} for it.
+     *
+     * Returns null if no suitable village is found.
+     */
+    public VillageBuildingRegistry findNearestRegistry(Location loc, double radius, BarbConfig config) {
+        VillageData best = null;
+        double bestDist = Double.MAX_VALUE;
+        World bestWorld = null;
+
+        for (VillageData village : villages.values()) {
+            World w = Bukkit.getWorld(village.getWorldName() != null ? village.getWorldName() : "");
+            if (w == null) continue;
+            // Village worlds are centred at (0, GROUND_Y, 0)
+            Location centre = new Location(w, 0, GROUND_Y, 0);
+            if (!w.equals(loc.getWorld())) {
+                // Attacker is not in this village world — use world-name proximity heuristic:
+                // just pick the first loaded village world (attacker must be in a village world)
+                continue;
+            }
+            double dist = centre.distance(loc);
+            if (dist < radius && dist < bestDist) {
+                bestDist = dist;
+                best = village;
+                bestWorld = w;
+            }
+        }
+
+        if (best == null || bestWorld == null) return null;
+        return new VillageBuildingRegistry(bestWorld, best, BUILDING_SLOTS, config);
+    }
+
     public String build(Player player, BuildingType type, int amount) {
         if (amount != 1) {
             return ChatColor.RED + "Build one structure per command.";

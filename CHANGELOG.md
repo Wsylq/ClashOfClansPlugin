@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.6.0] - 2026-04-07
+
+### Added
+- `BuildingRegistry` interface — abstraction over any set of attackable buildings, decoupling BarbAI from concrete building sources
+- `VillageBuildingRegistry` — implements `BuildingRegistry` against a live player village, deriving `BuildingInstance` locations from `VillageManager.BUILDING_SLOTS` at raid time
+- `VillageManager.findNearestRegistry()` — finds the village world the attacker is standing in and returns a registry for it
+- `VillageManager.getBuildingSlots()` — public static accessor for the building slot layout map
+
+### Changed
+- Barbarian AI (`BarbAI`) now targets buildings from any `BuildingRegistry`, not just a hardcoded test base
+- `/barbarian deploy <count>` now attacks real player village buildings in the world the attacker is standing in
+- `BarbManager` wired to `VillageManager` instead of `TestBaseManager`
+- Property 3 test now uses `BuildingRegistry.applyDamage` (the canonical static helper)
+
+### Removed
+- `TestBaseManager` — replaced by `VillageBuildingRegistry`
+- `TestBase` model record — no longer needed
+- `TestBaseCommand` and `/testbase` command — hardcoded test base spawning removed
+- `BarbManager.removeBarbsForBase` and `barbToBase` tracking — simplified since registry is per-deploy, not per-base
+- Property 1 and Property 6 tests — were specific to the removed TestBase layout
+
+### TODO
+- Prevent barbarians from being deployed into the attacker's own village — deployer should only be able to attack another player's village, not their own
+
+---
+
 ## [0.5.0] - 2026-04-07
 
 ### Added
@@ -11,6 +37,7 @@
 ### Fixed
 - Overview mode (`/clash overview`) now enables flight on open and restores the player's original `allowFlight` and `flying` state on exit, preventing fall damage
 - Troop visuals now refresh immediately when training completes, not only on next `renderVillage` call
+
 
 
 ## [0.4.0] - 2026-04-05
