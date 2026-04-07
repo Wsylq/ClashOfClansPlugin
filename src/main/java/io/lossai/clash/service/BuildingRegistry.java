@@ -28,4 +28,12 @@ public interface BuildingRegistry {
     static int applyDamage(int currentHp, int damage) {
         return Math.max(0, currentHp - damage);
     }
+
+    /**
+     * Returns the current HP of the given building, or -1 if not tracked.
+     * Implementations should override this to return the actual HP.
+     */
+    default int getHp(BuildingInstance instance) {
+        return -1;
+    }
 }

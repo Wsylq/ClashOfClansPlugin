@@ -17,6 +17,9 @@ J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\BarbAI.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\BarbConfig.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\BarbManager.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\BuildingRegistry.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\HealthBarConfig.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\HealthBarManager.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\HealthBarRenderer.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\RequirementBook.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\TestBaseManager.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\TestBaseRegistry.java
