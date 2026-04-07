@@ -1,6 +1,7 @@
 package io.lossai.clash.listener;
 
 import io.lossai.clash.ClashPlugin;
+import io.lossai.clash.service.ArcherManager;
 import io.lossai.clash.service.AttackSession;
 import io.lossai.clash.service.BarbManager;
 import io.lossai.clash.service.TestBaseManager;
@@ -26,10 +27,12 @@ public final class AttackListener implements Listener {
 
     private final ClashPlugin plugin;
     private final BarbManager barbManager;
+    private final ArcherManager archerManager;
 
-    public AttackListener(ClashPlugin plugin, BarbManager barbManager) {
+    public AttackListener(ClashPlugin plugin, BarbManager barbManager, ArcherManager archerManager) {
         this.plugin = plugin;
         this.barbManager = barbManager;
+        this.archerManager = archerManager;
     }
 
     @EventHandler
@@ -41,30 +44,34 @@ public final class AttackListener implements Listener {
         Player player = event.getPlayer();
         ItemStack item = player.getInventory().getItemInMainHand();
 
-        if (!BarbManager.isBarbHeadItem(item)) {
-            return;
+        if (BarbManager.isBarbHeadItem(item)) {
+            event.setCancelled(true);
+
+            // Block deployment outside the test base world entirely
+            if (!player.getWorld().getName().equals(TestBaseManager.WORLD_NAME)) {
+                player.sendMessage(ChatColor.RED + "You can only deploy barbarians in the test base. Use /clash attack first.");
+                return;
+            }
+
+            AttackSession session = barbManager.getSession(player.getUniqueId());
+            if (session == null) {
+                player.sendMessage(ChatColor.RED + "No active attack session. Use /clash attack to start.");
+                return;
+            }
+
+            if (session.isFinished()) {
+                barbManager.endSession(player);
+                return;
+            }
+
+            barbManager.deployOneFromSession(player, session);
+        } else if (ArcherManager.isArcherHeadItem(item)) {
+            AttackSession session = archerManager.getSession(player.getUniqueId());
+            if (session != null) {
+                archerManager.deployOneFromSession(player, session);
+            }
+            event.setCancelled(true);
         }
-
-        event.setCancelled(true);
-
-        // Block deployment outside the test base world entirely
-        if (!player.getWorld().getName().equals(TestBaseManager.WORLD_NAME)) {
-            player.sendMessage(ChatColor.RED + "You can only deploy barbarians in the test base. Use /clash attack first.");
-            return;
-        }
-
-        AttackSession session = barbManager.getSession(player.getUniqueId());
-        if (session == null) {
-            player.sendMessage(ChatColor.RED + "No active attack session. Use /clash attack to start.");
-            return;
-        }
-
-        if (session.isFinished()) {
-            barbManager.endSession(player);
-            return;
-        }
-
-        barbManager.deployOneFromSession(player, session);
     }
 
     /**

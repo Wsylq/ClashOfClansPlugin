@@ -1,9 +1,9 @@
 name: ClashVillages
-version: 1.0.4
+version: 1.0.5
 main: io.lossai.clash.ClashPlugin
 api-version: '1.21'
 author: lossai
-softdepend: [Citizens]
+softdepend: [Citizens, packetevents]
 commands:
   clash:
     description: Clash villages main command

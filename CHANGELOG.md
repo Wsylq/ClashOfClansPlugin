@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.9.0] - 2026-04-08
+
+### Added
+- `ArcherConfig` — reads `archer-system` section from `config.yml`; falls back to defaults (`archer-damage: 8`, `attack-interval-ticks: 25`, `attack-range-blocks: 10`, `draw-ticks: 10`) with warnings; pure-Java testable
+- `ArcherAI` — per-NPC state machine (`IDLE → SEEKING → DRAWING → ATTACKING`) with tick-based movement at 0.45 b/t, bow-draw animation via PacketEvents entity metadata (index 8), arrow projectile on fire, `BuildingRegistry.damageBuilding` damage, target re-selection on destruction, NPC null guard, and pure static `indexOfNearest` helper
+- `ArcherManager` — full session management mirroring `BarbManager`: `ARCHER_MAX_HP = 65`, `ARCHER_HEAD_LORE_TAG`, `startAttackSession`, `joinAttackSession`, `deployOneFromSession`, `endSession`, `getSession`, `isValidDeployCount`, `createArcherHeadItem`, `isArcherHeadItem`, `spawnIdleArchers`, `despawnIdleArchers`, `onArcherDespawn`, `clear`
+- `ArcherSystemPropertyTest` — 9 property-based tests (jqwik) covering config round-trip, fallback defaults, `indexOfNearest` correctness, and `isValidDeployCount` predicate
+- PacketEvents dependency (`com.github.retrooper:packetevents-spigot:2.6.0`) for sending entity metadata and rotation packets without NMS
+- `archer-system` block added to `config.yml`
+- `packetevents` added as soft dependency in `plugin.yml`
+
+### Changed
+- `/clash attack` now creates one shared `TestBaseRegistry` and enlists all trained troop types (barbarians + archers) — both troop head items are given simultaneously; `BarbManager` and `ArcherManager` each gained `joinAttackSession(Player, TestBaseRegistry)` for this
+- `ClashPlugin` exposes `getArcherManager()` and wires `ArcherManager` into `VillageManager` via `setArcherManager()`
+- `AttackListener` extended with `else if (ArcherManager.isArcherHeadItem(item))` branch routing to `archerManager.deployOneFromSession`
+- `VillageManager.spawnTroopVisuals` now skips `TroopType.ARCHER` in the generic NPC loop (ArcherManager handles archer idle visuals separately) and is guarded to only run in the player's own village world (not the test base)
+- Idle archer NPCs now wander randomly within army camp bounds every 3 seconds, matching barbarian idle behaviour; nameplate hidden and collision disabled
+- `ArcherAI` facing: uses PacketEvents `WrapperPlayServerEntityRotation` + `WrapperPlayServerEntityHeadLook` packets every tick during DRAWING/ATTACKING so the archer correctly faces the target building (yaw + pitch)
+- Bow-draw animation cycle: DRAWING sends `handActive=true` metadata each tick; on fire, sends `handActive=false` (release frame) then transitions back to DRAWING — produces visible draw → release → draw loop
+
+### Fixed
+- `NullPointerException` in `SkinTrait.setSkinPersistent` — Citizens requires a non-null signature; switched idle/deployed archer NPCs to `setSkinName` (async Mojang lookup)
+- 4 idle archer NPCs spawning instead of 2 — archers were being added to both the generic `troopAssignments` loop and `ArcherManager.spawnIdleArchers`; fixed by excluding `TroopType.ARCHER` from the generic loop
+- Archer deploy head showing no skin — `createArcherHeadItem` was using a fake texture hash; now uses a real Minecraft texture URL
+- Bow-draw animation stuck in drawn state — `sendHandActiveMetadata(false)` now sent on each fire before transitioning back to DRAWING
+- Archer not facing target — replaced `entity.teleport()` yaw-only approach (overridden by Citizens) with PacketEvents rotation packets including correct pitch calculation
+
+---
+
 ## [0.8.0] - 2026-04-07
 
 ### Added

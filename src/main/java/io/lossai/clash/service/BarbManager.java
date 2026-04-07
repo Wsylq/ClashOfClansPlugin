@@ -137,6 +137,32 @@ public class BarbManager {
     }
 
     /**
+     * Joins an already-created shared attack session (registry created externally).
+     * Used when multiple troop types attack together via /clash attack.
+     * Returns true if the session was registered successfully.
+     */
+    public boolean joinAttackSession(Player player, TestBaseRegistry registry) {
+        VillageData village = villageManager.getVillage(player.getUniqueId());
+        if (village == null) return false;
+
+        int barbCount = village.getTroopCount(TroopType.BARBARIAN);
+        if (barbCount <= 0) return false;
+
+        if (sessions.containsKey(player.getUniqueId())) {
+            endSession(player);
+        }
+
+        village.takeTroops(TroopType.BARBARIAN, barbCount);
+
+        AttackSession session = new AttackSession(player.getUniqueId(), registry, barbCount);
+        sessions.put(player.getUniqueId(), session);
+        sessionNpcIds.put(player.getUniqueId(), new java.util.HashSet<>());
+
+        giveBarbHeadItem(player, barbCount);
+        return true;
+    }
+
+    /**
      * Deploys one barbarian from the session at the player's current location.
      */
     public void deployOneFromSession(Player player, AttackSession session) {

@@ -82,6 +82,7 @@ public final class VillageManager {
     private final JavaPlugin plugin;
     private final VillageStore store;
     private final Map<UUID, VillageData> villages;
+    private ArcherManager archerManager;
     private final Map<UUID, Map<String, ConstructionJob>> activeJobs = new HashMap<>();
     private final Map<UUID, List<TrainingJob>> trainingJobs = new HashMap<>();
     private final Map<UUID, ResearchJob> activeResearch = new HashMap<>();
@@ -92,6 +93,10 @@ public final class VillageManager {
         this.plugin = plugin;
         this.store = store;
         this.villages = new LinkedHashMap<>(store.loadAll());
+    }
+
+    public void setArcherManager(ArcherManager archerManager) {
+        this.archerManager = archerManager;
     }
 
     public void setupVillageForPlayer(Player player) {
@@ -1375,6 +1380,10 @@ public final class VillageManager {
     }
 
     private void spawnTroopVisuals(World world, VillageData village) {
+        // Only spawn idle visuals in the player's own village world, not the test base
+        String villageWorldName = village.getWorldName();
+        if (villageWorldName == null || !world.getName().equals(villageWorldName)) return;
+
         UUID id = village.getPlayerId();
 
         // Clear old NPCs
@@ -1392,8 +1401,10 @@ public final class VillageManager {
         int campCount = village.getBuildingCount(BuildingType.ARMY_CAMP);
         if (campCount <= 0) return;
 
-        int totalTroops = village.getTroopsSnapshot().values().stream().mapToInt(Integer::intValue).sum();
-        if (totalTroops <= 0) return;
+        int totalTroops = village.getTroopsSnapshot().entrySet().stream()
+                .filter(e -> e.getKey() != TroopType.ARCHER)
+                .mapToInt(Map.Entry::getValue).sum();
+        if (totalTroops <= 0 && village.getTroopCount(TroopType.ARCHER) <= 0) return;
 
         List<int[]> campSlots = slotList(BuildingType.ARMY_CAMP).subList(0, campCount);
         int totalToSpawn = Math.min(totalTroops, campCount * ARMY_CAP_PER_CAMP);
@@ -1410,8 +1421,10 @@ public final class VillageManager {
         }
 
         // Build ordered list of TroopTypes to assign to each entity
+        // Skip ARCHER — ArcherManager handles archer idle visuals separately
         List<TroopType> troopAssignments = new ArrayList<>();
         for (TroopType type : TroopType.values()) {
+            if (type == TroopType.ARCHER) continue;
             int count = village.getTroopCount(type);
             for (int i = 0; i < count && troopAssignments.size() < totalToSpawn; i++) {
                 troopAssignments.add(type);
@@ -1462,6 +1475,17 @@ public final class VillageManager {
             }
         }
         troopVisualEntities.put(id, spawned);
+
+        // Archer idle visuals — delegated to ArcherManager
+        if (archerManager != null) {
+            if (village.getTroopCount(TroopType.ARCHER) > 0 && campCount > 0) {
+                int[] firstCampSlot = slotList(BuildingType.ARMY_CAMP).get(0);
+                Location armyCampOrigin = new Location(world, firstCampSlot[0] + 0.5, GROUND_Y + 1, firstCampSlot[1] + 0.5);
+                archerManager.spawnIdleArchers(world, village, armyCampOrigin);
+            } else {
+                archerManager.despawnIdleArchers(village.getPlayerId());
+            }
+        }
     }
 
     private void applyTroopSkin(ArmorStand stand, TroopType type) {

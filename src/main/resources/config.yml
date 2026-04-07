@@ -13,3 +13,9 @@ barbarian-system:
     wall: 50
   barbarian-damage: 10
   attack-interval-ticks: 20
+
+archer-system:
+  archer-damage: 8
+  attack-interval-ticks: 25
+  attack-range-blocks: 10
+  draw-ticks: 10

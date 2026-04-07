@@ -8,6 +8,8 @@ import io.lossai.clash.listener.InfoInventoryListener;
 import io.lossai.clash.listener.VillageBoundaryListener;
 import io.lossai.clash.listener.VillageInteractListener;
 import io.lossai.clash.listener.VillageWorldProtectionListener;
+import io.lossai.clash.service.ArcherConfig;
+import io.lossai.clash.service.ArcherManager;
 import io.lossai.clash.service.BarbConfig;
 import io.lossai.clash.service.BarbManager;
 import io.lossai.clash.service.HealthBarConfig;
@@ -24,6 +26,7 @@ public final class ClashPlugin extends JavaPlugin {
     private VillageManager villageManager;
     private BarbManager barbManager;
     private BarbConfig barbConfig;
+    private ArcherManager archerManager;
     private TestBaseManager testBaseManager;
     private HealthBarManager healthBarManager;
 
@@ -68,7 +71,12 @@ public final class ClashPlugin extends JavaPlugin {
             this.healthBarManager = new HealthBarManager(this, healthBarConfig);
             barbManager.setHealthBarManager(healthBarManager);
 
-            getServer().getPluginManager().registerEvents(new AttackListener(this, barbManager), this);
+            ArcherConfig archerConfig = ArcherConfig.load(getConfig(), getLogger());
+            this.archerManager = new ArcherManager(this, archerConfig, villageManager,
+                    testBaseManager, healthBarManager, null);
+            villageManager.setArcherManager(archerManager);
+
+            getServer().getPluginManager().registerEvents(new AttackListener(this, barbManager, archerManager), this);
 
             PluginCommand barbCommand = getCommand("barbarian");
             if (barbCommand != null) {
@@ -94,6 +102,9 @@ public final class ClashPlugin extends JavaPlugin {
         if (barbManager != null) {
             barbManager.clear();
         }
+        if (archerManager != null) {
+            archerManager.clear();
+        }
         if (healthBarManager != null) {
             healthBarManager.shutdown();
         }
@@ -101,6 +112,10 @@ public final class ClashPlugin extends JavaPlugin {
 
     public BarbConfig getBarbConfig() {
         return barbConfig;
+    }
+
+    public ArcherManager getArcherManager() {
+        return archerManager;
     }
 
     public BarbManager getBarbManager() {

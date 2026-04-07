@@ -11,6 +11,9 @@ J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\model\BuildingInstance.jav
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\model\BuildingType.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\model\TroopType.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\model\VillageData.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\ArcherAI.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\ArcherConfig.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\ArcherManager.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\AttackSession.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\BalanceBook.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\BarbAI.java

@@ -3,7 +3,9 @@ package io.lossai.clash.command;
 import io.lossai.clash.ClashPlugin;
 import io.lossai.clash.model.BuildingType;
 import io.lossai.clash.model.TroopType;
+import io.lossai.clash.service.TestBaseRegistry;
 import io.lossai.clash.service.VillageManager;
+import io.lossai.clash.model.VillageData;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -185,10 +187,66 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
 
     private void handleAttack(Player player) {
         if (plugin.getBarbManager() == null) {
-            player.sendMessage(ChatColor.RED + "Barbarian system is not available (Citizens2 required).");
+            player.sendMessage(ChatColor.RED + "Troop system is not available (Citizens2 required).");
             return;
         }
-        plugin.getBarbManager().startAttackSession(player);
+
+        VillageData village = villageManager.getVillage(player.getUniqueId());
+        if (village == null) {
+            player.sendMessage(ChatColor.RED + "Village not initialized.");
+            return;
+        }
+
+        int barbCount  = village.getTroopCount(TroopType.BARBARIAN);
+        int archerCount = village.getTroopCount(TroopType.ARCHER);
+
+        if (barbCount <= 0 && archerCount <= 0) {
+            player.sendMessage(ChatColor.RED + "You have no troops trained. Use /clash train <barbarian|archer> <amount>.");
+            return;
+        }
+
+        if (plugin.getTestBaseManager() == null) {
+            player.sendMessage(ChatColor.RED + "Test base system is not available.");
+            return;
+        }
+
+        // Create ONE shared registry for this attack
+        TestBaseRegistry registry = plugin.getTestBaseManager().createFreshRegistry(plugin.getBarbConfig());
+        if (registry == null) {
+            player.sendMessage(ChatColor.RED + "Could not load test base world.");
+            return;
+        }
+        if (plugin.getHealthBarManager() != null) {
+            registry.setHealthBarManager(plugin.getHealthBarManager());
+            registry.setSessionId(player.getUniqueId());
+        }
+        plugin.getTestBaseManager().setActiveRegistry(player.getUniqueId(), registry);
+
+        // Enlist each troop type that has units trained
+        boolean anyJoined = false;
+        if (barbCount > 0) {
+            anyJoined |= plugin.getBarbManager().joinAttackSession(player, registry);
+        }
+        if (archerCount > 0 && plugin.getArcherManager() != null) {
+            anyJoined |= plugin.getArcherManager().joinAttackSession(player, registry);
+        }
+
+        if (!anyJoined) {
+            player.sendMessage(ChatColor.RED + "Failed to start attack session.");
+            return;
+        }
+
+        // Teleport to test base
+        org.bukkit.World testWorld = plugin.getTestBaseManager().getOrCreateWorld();
+        if (testWorld != null) {
+            player.teleportAsync(new org.bukkit.Location(testWorld, 0.5,
+                    io.lossai.clash.service.TestBaseManager.getGroundY() + 2.0, -18.5, 0f, 0f));
+        }
+
+        player.sendMessage(ChatColor.GREEN + "Attack started!"
+                + (barbCount  > 0 ? ChatColor.WHITE + " Barbarians: " + ChatColor.YELLOW + barbCount  : "")
+                + (archerCount > 0 ? ChatColor.WHITE + " Archers: "    + ChatColor.YELLOW + archerCount : ""));
+        player.sendMessage(ChatColor.GRAY + "Right-click with a troop head to deploy.");
     }
 
     private List<String> displayBuildingNames() {
