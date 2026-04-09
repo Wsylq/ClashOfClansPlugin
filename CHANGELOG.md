@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.0.0] - 2026-04-09 - Major Update
+
+### Added
+- `/clash edit` command — enter base edit mode: fly above village, pick up/move/place/remove buildings in real time
+- `/clash edit exit` — exit edit mode and save layout
+- `/clash edit select <type>` — select a building type for new placement
+- `/clash edit remove` — remove building under cursor
+- `grid.model` package: `GridCoord`, `Footprint`, `PlacedBuilding` value types
+- `grid.occupancy` package: `FootprintRegistry` (single source of footprint definitions), `OccupancyMap` (64×64 grid, single source of truth for layout)
+- `grid.placement` package: `PlacementSession` (per-player edit state, IDLE/PLACING/MOVING/WALL_DRAW modes), `GhostPreview` (PacketEvents fake block packets, lime/red stained glass), `WallDrawSession` (Bresenham wall drag)
+- `grid.renderer` package: `VillageRenderer` (flat single-block grid view during edit, 3D re-render on exit)
+- `grid.persistence` package: `LayoutSerializer` (JSON save/load at `plugins/clash/layouts/<uuid>.json`)
+- `grid.command` package: `EditCommand`
+- Layout JSON persisted on exit; loaded and slot overrides rebuilt on every login so building positions survive server restarts
+- Per-player slot overrides in `VillageManager` — cannon defense, archer tower defense, troop visuals, and army camp all use new positions after edit
+- Property tests: cursor snapping (Property 1), `EditCommand` guard logic (3 unit tests), `PlacementSession` guard logic (3 unit tests)
+
+### Changed
+- `VillageManager.renderVillage` suppressed while player is in edit mode to prevent 3D structures overwriting the flat edit view
+- `VillageManager.tickCannonDefense` and `tickArcherTowerDefense` use per-player slot overrides
+- `VillageManager.spawnTroopVisuals` and idle archer spawn use per-player slot overrides for army camp position
+- `VillageBuildingRegistry` uses per-player slot overrides when building the attack registry
+- `PlayerJoinListener` rebuilds slot overrides from saved layout before `setupVillageForPlayer` runs
+- `ClashCommand` routes `edit` sub-command to `EditCommand`
+- `ClashPlugin` registers `PlayerQuitEvent`, `PlayerInteractEvent`, `PlayerToggleSneakEvent` listeners for edit mode
+
+### Fixed
+- Ghost preview blocks appearing in wrong world position — `GhostPreview` now applies grid origin offset (`-32, -32`) when sending PacketEvents block-change packets
+- Buildings rendering at wrong position after move — `applyLayoutToVillageData` now converts NW-corner anchor to building centre before passing to `VillageManager`
+- Buildings reverting to original positions on rejoin — slot overrides now rebuilt from layout JSON on every login
+- Residue blocks left at old building location after move — `clearPlayableArea` now uses a full square clear covering the entire scenery area
+- Archers wandering at old army camp position — idle archer spawn uses per-player slot overrides
+
 ## [0.9.0] - 2026-04-08
 
 ### Added

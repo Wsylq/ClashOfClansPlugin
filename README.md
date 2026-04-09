@@ -70,14 +70,14 @@
 
 ## 🗺️ Base Building (Free-Form Grid)
 
-- [ ] 44x44 tile occupancy grid (`HashMap<GridCoord, PlacedBuilding>`)
-- [ ] Ghost preview on crosshair (fake block packets via PacketEvents)
-- [ ] Green/red preview based on valid/invalid placement
-- [ ] Left-click to confirm, Sneak to cancel
+- [x] 44x44 tile occupancy grid (`HashMap<GridCoord, PlacedBuilding>`)
+- [x] Ghost preview on crosshair (fake block packets via PacketEvents)
+- [x] Green/red preview based on valid/invalid placement
+- [x] Left-click to confirm, Sneak to cancel
 - [ ] Wall draw mode (click-drag to chain walls)
-- [ ] Move building command (no builder consumed)
-- [ ] Save layout as JSON per player
-- [ ] Load and regenerate village from JSON on login
+- [x] Move building command (no builder consumed)
+- [x] Save layout as JSON per player
+- [x] Load and regenerate village from JSON on login
 - [ ] Generate defender's village from JSON in attack world
 
 ---

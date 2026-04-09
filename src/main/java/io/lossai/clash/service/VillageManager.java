@@ -88,6 +88,10 @@ public final class VillageManager {
     private final Map<UUID, ResearchJob> activeResearch = new HashMap<>();
     private final Map<UUID, OverviewSession> overviewSessions = new HashMap<>();
     private final Map<UUID, List<NPC>> troopVisualEntities = new HashMap<>();
+    /** Players currently in base edit mode — renderVillage is suppressed for them. */
+    private final Set<UUID> editModePlayers = new java.util.HashSet<>();
+    /** Per-player building slot overrides set by the edit system on layout save. */
+    private final Map<UUID, Map<BuildingType, List<int[]>>> playerSlotOverrides = new HashMap<>();
 
     public VillageManager(JavaPlugin plugin, VillageStore store) {
         this.plugin = plugin;
@@ -97,6 +101,108 @@ public final class VillageManager {
 
     public void setArcherManager(ArcherManager archerManager) {
         this.archerManager = archerManager;
+    }
+
+    /** Called by EditCommand when a player enters edit mode. */
+    public void enterEditMode(UUID playerId) {
+        editModePlayers.add(playerId);
+    }
+
+    /**
+     * Clears all 3D building structures above the grid for a player entering edit mode,
+     * leaving only y=GROUND_Y (grass) and below. The edit system then renders flat blocks.
+     */
+    public void clearForEditMode(Player player) {
+        VillageData village = villages.get(player.getUniqueId());
+        if (village == null) return;
+        World world = getOrCreateVillageWorld(village);
+        if (world == null) return;
+        // Clear everything above ground level in the playable area
+        for (int x = -PLAYABLE_RADIUS; x <= PLAYABLE_RADIUS; x++) {
+            for (int z = -PLAYABLE_RADIUS; z <= PLAYABLE_RADIUS; z++) {
+                if (x * x + z * z > PLAYABLE_RADIUS * PLAYABLE_RADIUS) continue;
+                for (int y = GROUND_Y + 1; y <= GROUND_Y + 14; y++) {
+                    world.getBlockAt(x, y, z).setType(org.bukkit.Material.AIR, false);
+                }
+            }
+        }
+    }
+
+    /** Called by EditCommand when a player exits or disconnects from edit mode. */
+    public void exitEditMode(UUID playerId) {
+        editModePlayers.remove(playerId);
+    }
+
+    public boolean isInEditMode(UUID playerId) {
+        return editModePlayers.contains(playerId);
+    }
+
+    /**
+     * Clears all blocks above ground level in the playable area.
+     * Called by EditCommand before re-rendering at new positions to remove residue.
+     */
+    public void clearPlayableArea(Player player) {
+        VillageData village = villages.get(player.getUniqueId());
+        if (village == null) return;
+        World world = getOrCreateVillageWorld(village);
+        if (world == null) return;
+        // Use square clear (not circular) to catch all building positions including corners
+        for (int x = -SCENERY_RADIUS; x <= SCENERY_RADIUS; x++) {
+            for (int z = -SCENERY_RADIUS; z <= SCENERY_RADIUS; z++) {
+                for (int y = GROUND_Y + 1; y <= GROUND_Y + 14; y++) {
+                    world.getBlockAt(x, y, z).setType(Material.AIR, false);
+                }
+            }
+        }
+    }
+
+    /**
+     * Forces a full re-render of the player's village using the current VillageData.
+     * Called by EditCommand after saving the new layout so the 3D structures appear
+     * at their updated positions.
+     */
+    public void rerenderVillage(Player player) {
+        VillageData village = villages.get(player.getUniqueId());
+        if (village == null) return;
+        World world = getOrCreateVillageWorld(village);
+        if (world == null) return;
+        renderVillage(world, village);
+    }
+
+    /**
+     * Overrides the building slot positions for a specific player.
+     * Called by EditCommand on layout save so {@code renderVillage} places
+     * 3D structures at the new positions chosen in edit mode.
+     */
+    public void setPlayerSlotOverrides(UUID playerId, Map<BuildingType, List<int[]>> overrides) {
+        if (overrides == null || overrides.isEmpty()) {
+            playerSlotOverrides.remove(playerId);
+        } else {
+            playerSlotOverrides.put(playerId, overrides);
+        }
+    }
+
+    /**
+     * Rebuilds per-player slot overrides from a saved OccupancyMap on login.
+     * Converts NW-corner anchors to building centres (as VillageManager expects).
+     */
+    public void rebuildSlotOverridesFromLayout(UUID playerId, io.lossai.clash.grid.occupancy.OccupancyMap map) {
+        final int GRID_ORIGIN = -32;
+        Map<BuildingType, List<int[]>> overrides = new java.util.EnumMap<>(BuildingType.class);
+        map.snapshot().values().stream()
+                .distinct()
+                .forEach(building -> {
+                    io.lossai.clash.grid.model.GridCoord anchor = building.anchor();
+                    io.lossai.clash.grid.model.Footprint fp =
+                            io.lossai.clash.grid.occupancy.FootprintRegistry.get(building.type());
+                    int centreX = anchor.x() + (fp.width() - 1) / 2;
+                    int centreZ = anchor.z() + (fp.depth() - 1) / 2;
+                    overrides.computeIfAbsent(building.type(), t -> new java.util.ArrayList<>())
+                             .add(new int[]{centreX + GRID_ORIGIN, centreZ + GRID_ORIGIN});
+                });
+        if (!overrides.isEmpty()) {
+            playerSlotOverrides.put(playerId, overrides);
+        }
     }
 
     public void setupVillageForPlayer(Player player) {
@@ -179,7 +285,9 @@ public final class VillageManager {
         }
 
         if (best == null || bestWorld == null) return null;
-        return new VillageBuildingRegistry(bestWorld, best, BUILDING_SLOTS, config);
+        // Use per-player slot overrides if available (set by edit mode on save)
+        Map<BuildingType, List<int[]>> slots = playerSlotOverrides.getOrDefault(best.getPlayerId(), BUILDING_SLOTS);
+        return new VillageBuildingRegistry(bestWorld, best, slots, config);
     }
 
     public String build(Player player, BuildingType type, int amount) {
@@ -800,12 +908,14 @@ public final class VillageManager {
     public void tickArcherTowerDefense() {
         for (VillageData village : villages.values()) {
             World world = Bukkit.getWorld(village.getWorldName());
-            if (world == null) {
-                continue;
-            }
-            int count = Math.min(village.getBuildingCount(BuildingType.ARCHER_TOWER), slotList(BuildingType.ARCHER_TOWER).size());
+            if (world == null) continue;
+            Map<BuildingType, List<int[]>> overrides = playerSlotOverrides.get(village.getPlayerId());
+            List<int[]> slots = (overrides != null && overrides.containsKey(BuildingType.ARCHER_TOWER))
+                    ? overrides.get(BuildingType.ARCHER_TOWER)
+                    : slotList(BuildingType.ARCHER_TOWER);
+            int count = Math.min(village.getBuildingCount(BuildingType.ARCHER_TOWER), slots.size());
             for (int i = 0; i < count; i++) {
-                int[] slot = slotList(BuildingType.ARCHER_TOWER).get(i);
+                int[] slot = slots.get(i);
                 Location source = new Location(world, slot[0] + 0.5, GROUND_Y + 7.2, slot[1] + 0.5);
                 fireArcherTower(source, 18.0);
             }
@@ -815,12 +925,14 @@ public final class VillageManager {
     public void tickCannonDefense() {
         for (VillageData village : villages.values()) {
             World world = Bukkit.getWorld(village.getWorldName());
-            if (world == null) {
-                continue;
-            }
-            int count = Math.min(village.getBuildingCount(BuildingType.CANNON), slotList(BuildingType.CANNON).size());
+            if (world == null) continue;
+            Map<BuildingType, List<int[]>> overrides = playerSlotOverrides.get(village.getPlayerId());
+            List<int[]> slots = (overrides != null && overrides.containsKey(BuildingType.CANNON))
+                    ? overrides.get(BuildingType.CANNON)
+                    : slotList(BuildingType.CANNON);
+            int count = Math.min(village.getBuildingCount(BuildingType.CANNON), slots.size());
             for (int i = 0; i < count; i++) {
-                int[] slot = slotList(BuildingType.CANNON).get(i);
+                int[] slot = slots.get(i);
                 fireCannon(world, slot[0], slot[1], 14.0);
             }
         }
@@ -1122,6 +1234,10 @@ public final class VillageManager {
     }
 
     private void renderVillage(World world, VillageData village) {
+        // Suppress rendering while the player is in edit mode — the edit system owns the world state
+        if (editModePlayers.contains(village.getPlayerId())) {
+            return;
+        }
         clearAbove(world);
         flatten(world);
         placeBoundary(world);
@@ -1248,7 +1364,11 @@ public final class VillageManager {
     }
 
     private void placeBuildings(World world, VillageData village, BuildingType type, int count, int level) {
-        List<int[]> slots = slotList(type);
+        // Use per-player slot overrides if available (set by edit mode on save)
+        Map<BuildingType, List<int[]>> overrides = playerSlotOverrides.get(village.getPlayerId());
+        List<int[]> slots = (overrides != null && overrides.containsKey(type))
+                ? overrides.get(type)
+                : slotList(type);
         int limit = Math.min(count, slots.size());
         for (int i = 0; i < limit; i++) {
             int[] slot = slots.get(i);
@@ -1406,7 +1526,10 @@ public final class VillageManager {
                 .mapToInt(Map.Entry::getValue).sum();
         if (totalTroops <= 0 && village.getTroopCount(TroopType.ARCHER) <= 0) return;
 
-        List<int[]> campSlots = slotList(BuildingType.ARMY_CAMP).subList(0, campCount);
+        List<int[]> campSlots = playerSlotOverrides.containsKey(id)
+                && playerSlotOverrides.get(id).containsKey(BuildingType.ARMY_CAMP)
+                ? playerSlotOverrides.get(id).get(BuildingType.ARMY_CAMP).subList(0, campCount)
+                : slotList(BuildingType.ARMY_CAMP).subList(0, campCount);
         int totalToSpawn = Math.min(totalTroops, campCount * ARMY_CAP_PER_CAMP);
 
         // Distribute across camps (fewest-first round-robin)
@@ -1479,7 +1602,10 @@ public final class VillageManager {
         // Archer idle visuals — delegated to ArcherManager
         if (archerManager != null) {
             if (village.getTroopCount(TroopType.ARCHER) > 0 && campCount > 0) {
-                int[] firstCampSlot = slotList(BuildingType.ARMY_CAMP).get(0);
+                Map<BuildingType, List<int[]>> archerOverrides = playerSlotOverrides.get(id);
+                int[] firstCampSlot = (archerOverrides != null && archerOverrides.containsKey(BuildingType.ARMY_CAMP))
+                        ? archerOverrides.get(BuildingType.ARMY_CAMP).get(0)
+                        : slotList(BuildingType.ARMY_CAMP).get(0);
                 Location armyCampOrigin = new Location(world, firstCampSlot[0] + 0.5, GROUND_Y + 1, firstCampSlot[1] + 0.5);
                 archerManager.spawnIdleArchers(world, village, armyCampOrigin);
             } else {

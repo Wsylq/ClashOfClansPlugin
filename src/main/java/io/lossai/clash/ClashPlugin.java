@@ -2,6 +2,8 @@ package io.lossai.clash;
 
 import io.lossai.clash.command.BarbCommand;
 import io.lossai.clash.command.ClashCommand;
+import io.lossai.clash.grid.command.EditCommand;
+import io.lossai.clash.grid.persistence.LayoutSerializer;
 import io.lossai.clash.listener.AttackListener;
 import io.lossai.clash.listener.PlayerJoinListener;
 import io.lossai.clash.listener.InfoInventoryListener;
@@ -18,12 +20,19 @@ import io.lossai.clash.service.TestBaseManager;
 import io.lossai.clash.service.VillageManager;
 import io.lossai.clash.storage.VillageStore;
 import org.bukkit.command.PluginCommand;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class ClashPlugin extends JavaPlugin {
 
     private VillageStore villageStore;
     private VillageManager villageManager;
+    private EditCommand editCommand;
     private BarbManager barbManager;
     private BarbConfig barbConfig;
     private ArcherManager archerManager;
@@ -39,11 +48,40 @@ public final class ClashPlugin extends JavaPlugin {
         this.barbConfig = BarbConfig.load(getConfig(), getLogger());
         HealthBarConfig healthBarConfig = HealthBarConfig.load(getConfig(), getLogger());
 
-        getServer().getPluginManager().registerEvents(new PlayerJoinListener(this, villageManager), this);
+        // Edit mode
+        LayoutSerializer layoutSerializer = new LayoutSerializer(getDataFolder(), getLogger());
+        this.editCommand = new EditCommand(this, villageManager, layoutSerializer);
+
+        getServer().getPluginManager().registerEvents(new PlayerJoinListener(this, villageManager, layoutSerializer), this);
         getServer().getPluginManager().registerEvents(new VillageWorldProtectionListener(villageManager), this);
         getServer().getPluginManager().registerEvents(new VillageBoundaryListener(villageManager), this);
         getServer().getPluginManager().registerEvents(new VillageInteractListener(villageManager), this);
         getServer().getPluginManager().registerEvents(new InfoInventoryListener(), this);
+
+        getServer().getPluginManager().registerEvents(new Listener() {
+            @EventHandler
+            public void onQuit(PlayerQuitEvent e) {
+                editCommand.handleQuit(e.getPlayer());
+            }
+
+            @EventHandler
+            public void onInteract(PlayerInteractEvent e) {
+                Action action = e.getAction();
+                if (action == Action.LEFT_CLICK_AIR || action == Action.LEFT_CLICK_BLOCK) {
+                    if (editCommand.isInEditMode(e.getPlayer().getUniqueId())) {
+                        e.getPlayer().sendMessage("§7[debug] left-click received in edit mode");
+                    }
+                    editCommand.handleInteract(e.getPlayer(), true);
+                }
+            }
+
+            @EventHandler
+            public void onSneak(PlayerToggleSneakEvent e) {
+                if (e.isSneaking()) {
+                    editCommand.handleSneak(e.getPlayer());
+                }
+            }
+        }, this);
 
         PluginCommand clashCommand = getCommand("clash");
         if (clashCommand == null) {
@@ -52,7 +90,7 @@ public final class ClashPlugin extends JavaPlugin {
             return;
         }
 
-        ClashCommand executor = new ClashCommand(villageManager, this);
+        ClashCommand executor = new ClashCommand(villageManager, this, editCommand);
         clashCommand.setExecutor(executor);
         clashCommand.setTabCompleter(executor);
 
@@ -112,6 +150,10 @@ public final class ClashPlugin extends JavaPlugin {
 
     public BarbConfig getBarbConfig() {
         return barbConfig;
+    }
+
+    public EditCommand getEditCommand() {
+        return editCommand;
     }
 
     public ArcherManager getArcherManager() {

@@ -1,6 +1,7 @@
 package io.lossai.clash.command;
 
 import io.lossai.clash.ClashPlugin;
+import io.lossai.clash.grid.command.EditCommand;
 import io.lossai.clash.model.BuildingType;
 import io.lossai.clash.model.TroopType;
 import io.lossai.clash.service.TestBaseRegistry;
@@ -22,10 +23,12 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
 
     private final VillageManager villageManager;
     private final ClashPlugin plugin;
+    private final EditCommand editCommand;
 
-    public ClashCommand(VillageManager villageManager, ClashPlugin plugin) {
+    public ClashCommand(VillageManager villageManager, ClashPlugin plugin, EditCommand editCommand) {
         this.villageManager = villageManager;
         this.plugin = plugin;
+        this.editCommand = editCommand;
     }
 
     @Override
@@ -53,6 +56,12 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
             case "finish" -> handleFinish(player, args);
             case "reload" -> handleReload(player);
             case "attack" -> handleAttack(player);
+            case "edit" -> {
+                // Strip "edit" and pass remaining args to EditCommand
+                String[] editArgs = new String[args.length - 1];
+                System.arraycopy(args, 1, editArgs, 0, editArgs.length);
+                editCommand.onCommand(sender, command, label, editArgs);
+            }
             default -> sendHelp(player);
         }
 
@@ -264,7 +273,7 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 1) {
-            return filterByPrefix(List.of("tp", "village", "build", "upgrade", "collect", "overview", "train", "research", "finish", "attack", "reload"), args[0]);
+            return filterByPrefix(List.of("tp", "village", "build", "upgrade", "collect", "overview", "train", "research", "finish", "attack", "edit", "reload"), args[0]);
         }
 
         if (args.length == 2 && args[0].equalsIgnoreCase("overview")) {
@@ -308,6 +317,13 @@ public final class ClashCommand implements CommandExecutor, TabCompleter {
                 finishTargets.add(type.name().toLowerCase(Locale.ROOT));
             }
             return filterByPrefix(finishTargets, args[1]);
+        }
+
+        if (args[0].equalsIgnoreCase("edit")) {
+            // Delegate to EditCommand.onTabComplete with args shifted by 1
+            String[] editArgs = new String[args.length - 1];
+            System.arraycopy(args, 1, editArgs, 0, editArgs.length);
+            return editCommand.onTabComplete(sender, command, alias, editArgs);
         }
 
         return Collections.emptyList();
