@@ -24,6 +24,7 @@ public final class BarbConfig {
         DEFAULT_HP.put(BuildingType.TOWNHALL, 300);
         DEFAULT_HP.put(BuildingType.CANNON, 150);
         DEFAULT_HP.put(BuildingType.ARCHER_TOWER, 120);
+        DEFAULT_HP.put(BuildingType.MORTAR, 400);
         DEFAULT_HP.put(BuildingType.GOLD_MINE, 80);
         DEFAULT_HP.put(BuildingType.ELIXIR_COLLECTOR, 80);
         DEFAULT_HP.put(BuildingType.WALL, 50);
@@ -34,6 +35,7 @@ public final class BarbConfig {
             "townhall", BuildingType.TOWNHALL,
             "cannon", BuildingType.CANNON,
             "archer_tower", BuildingType.ARCHER_TOWER,
+            "mortar", BuildingType.MORTAR,
             "gold_mine", BuildingType.GOLD_MINE,
             "elixir_collector", BuildingType.ELIXIR_COLLECTOR,
             "wall", BuildingType.WALL

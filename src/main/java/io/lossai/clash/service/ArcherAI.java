@@ -243,6 +243,8 @@ public class ArcherAI {
 
         // Spawn arrow and remove it after 1 tick (visual only — damage applied directly)
         Arrow arrow = entity.getWorld().spawnArrow(npcLoc, direction, 1.5f, 1.0f);
+        arrow.setDamage(0); // visual only — prevent friendly fire between troops
+        arrow.setPickupStatus(org.bukkit.entity.AbstractArrow.PickupStatus.DISALLOWED);
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
             if (arrow.isValid()) arrow.remove();
         }, 1L);

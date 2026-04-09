@@ -34,6 +34,10 @@ J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\BuildingRegistry.j
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\HealthBarConfig.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\HealthBarManager.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\HealthBarRenderer.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\MortarAI.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\MortarConfig.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\MortarManager.java
+J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\MortarStats.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\RequirementBook.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\TestBaseManager.java
 J:\COC-plugin\mc-plugin\src\main\java\io\lossai\clash\service\TestBaseRegistry.java

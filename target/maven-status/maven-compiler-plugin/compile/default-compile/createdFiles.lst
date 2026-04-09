@@ -6,12 +6,14 @@ io\lossai\clash\command\BarbCommand.class
 io\lossai\clash\service\VillageManager$BlockPos.class
 io\lossai\clash\service\AttackSession.class
 io\lossai\clash\service\VillageBuildingRegistry.class
+io\lossai\clash\service\MortarConfig.class
 io\lossai\clash\service\BarbManager.class
 io\lossai\clash\service\VillageManager$ResearchJob.class
 io\lossai\clash\service\VillageManager$JobKind.class
 io\lossai\clash\service\HealthBarRenderer.class
 io\lossai\clash\ClashPlugin.class
 io\lossai\clash\grid\command\EditCommand$SessionEntry.class
+io\lossai\clash\service\MortarStats.class
 io\lossai\clash\service\RequirementBook.class
 io\lossai\clash\service\TestBaseRegistry.class
 io\lossai\clash\service\BalanceBook$BuildInfo.class
@@ -29,6 +31,7 @@ io\lossai\clash\grid\renderer\VillageRenderer$1.class
 io\lossai\clash\service\TargetKey.class
 io\lossai\clash\service\HealthBarManager.class
 io\lossai\clash\service\VillageManager$TrainingJob.class
+io\lossai\clash\service\MortarManager.class
 io\lossai\clash\service\BalanceBook.class
 io\lossai\clash\grid\command\EditCommand.class
 io\lossai\clash\service\BuildingRegistry.class
@@ -39,6 +42,7 @@ io\lossai\clash\service\VillageManager.class
 io\lossai\clash\service\TestBaseManager.class
 io\lossai\clash\service\BuildingKey.class
 io\lossai\clash\grid\command\EditCommand$2.class
+io\lossai\clash\service\MortarAI.class
 io\lossai\clash\service\TroopBook$1.class
 io\lossai\clash\service\VillageManager$ConstructionJob.class
 io\lossai\clash\grid\model\GridCoord.class

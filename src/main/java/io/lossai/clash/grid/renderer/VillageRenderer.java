@@ -99,6 +99,7 @@ public class VillageRenderer {
             case TOWNHALL         -> Material.GOLD_BLOCK;
             case CANNON           -> Material.IRON_BLOCK;
             case ARCHER_TOWER     -> Material.STONE_BRICKS;
+            case MORTAR           -> Material.GRAY_CONCRETE;
             case BARRACKS         -> Material.BRICKS;
             case ARMY_CAMP        -> Material.MOSSY_COBBLESTONE;
             case GOLD_MINE        -> Material.YELLOW_CONCRETE;

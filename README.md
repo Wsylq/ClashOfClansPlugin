@@ -3,7 +3,7 @@
 ## 🏗️ Buildings
 
 ### Defenses
-- [ ] Mortar (1x, max lvl 3)
+- [x] Mortar (1x, max lvl 3)
 - [ ] Air Defense (1x, max lvl 3)
 - [ ] Wizard Tower (1x, max lvl 3) ⭐ signature TH5 unlock
 - [ ] Add 2nd and 3rd Cannon instance

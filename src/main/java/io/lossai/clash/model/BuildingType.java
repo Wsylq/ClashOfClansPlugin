@@ -16,6 +16,7 @@ public enum BuildingType {
     LABORATORY,
     CANNON,
     ARCHER_TOWER,
+    MORTAR,
     WALL;
 
     public String displayName() {

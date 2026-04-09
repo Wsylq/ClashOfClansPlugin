@@ -1,6 +1,37 @@
 # Changelog
 
-## [1.0.0] - 2026-04-09 - Major Update
+## [1.1.0] - 2026-04-10
+
+### Added
+- `MortarStats` — single source of truth for all mortar constants: min range 4, max range 11, splash radius 1.5, cooldown 100 ticks, damage per level (40/50/60)
+- `MortarConfig` — reads `mortar-system` section from `config.yml`; falls back to defaults with warnings; mirrors `ArcherConfig` exactly
+- `MortarAI` — targeting logic with 4-tile blind spot enforcement, Snowball projectile launch, AOE splash damage on landing; pure static helpers `indexOfNearestInRange`, `isInEffectiveRange`, `isInSplashRadius` for testability
+- `MortarManager` — defense tick loop mirroring cannon/archer tower pattern; wired into `ClashPlugin` scheduler at 20-tick interval
+- `MortarSystemPropertyTest` — jqwik property tests covering config round-trip, blind spot exclusion, and splash radius accuracy
+- Mortar added to test attack base at position `{0, 10}` with 5-second fire cooldown
+- `mortar-system` block added to `config.yml` (`damage: 40`, `cooldown-ticks: 100`, `min-range: 4`, `max-range: 11`)
+- `mortar: 400` HP added to `barbarian-system.building-hp` in `config.yml`
+
+### Changed
+- `BuildingType` — added `MORTAR`
+- `FootprintRegistry` — 3×3 footprint for MORTAR
+- `VillageRenderer.blockFor` — `GRAY_CONCRETE` for MORTAR
+- `BalanceBook` — MORTAR unlocked at TH1, gold cost 400, 25s build time
+- `BarbConfig` — MORTAR HP default 400 added to `DEFAULT_HP` and `KEY_TO_TYPE`
+- `VillageManager` — MORTAR slot at `{0, -26}`, `placeMortar` method (stone brick base + cauldron), map overview color `#636E72`, `getPlayerSlotOverrides` accessor added
+- `ClashPlugin` — instantiates `MortarConfig` and `MortarManager`, schedules `tickMortarDefense` every 20 ticks
+- `AttackSession` — added `ownsRegistry` flag to distinguish solo vs shared attack sessions
+- `BarbManager.endSession` — only clears the active registry when `ownsRegistry` is true (solo attack); shared `/clash attack` registry stays alive so defenses keep firing after barbs die
+- `ArcherManager.endSession` — same fix as BarbManager
+- `TestBaseManager` — mortar fires every 5 seconds (cooldown counter); defense arrows set to `setDamage(0)` so they are visual-only and cannot hit unintended NPCs
+
+### Fixed
+- Mortar targeting players in own village — changed target filter from `LivingEntity` to `Monster` in both `MortarAI` and `MortarManager`, matching cannon/archer tower pattern
+- Cannon and mortar stopping after barbarians die in shared attack — `endSession` in `BarbManager`/`ArcherManager` no longer nulls the shared registry; defenses continue firing at remaining troops
+- Archer arrows dealing friendly fire damage to barbarians — `ArcherAI` visual arrow now has `setDamage(0)` and `DISALLOWED` pickup status
+- Test base defense arrows hitting unintended NPCs — `shootDefense` arrow set to `setDamage(0)`; all damage applied directly to the intended target only
+
+## [1.0.0] - 2026-04-09
 
 ### Added
 - `/clash edit` command — enter base edit mode: fly above village, pick up/move/place/remove buildings in real time

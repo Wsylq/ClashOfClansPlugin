@@ -8,6 +8,7 @@ barbarian-system:
     townhall: 300
     cannon: 150
     archer_tower: 120
+    mortar: 400
     gold_mine: 80
     elixir_collector: 80
     wall: 50
@@ -19,3 +20,9 @@ archer-system:
   attack-interval-ticks: 25
   attack-range-blocks: 10
   draw-ticks: 10
+
+mortar-system:
+  damage: 40
+  cooldown-ticks: 100
+  min-range: 4
+  max-range: 11

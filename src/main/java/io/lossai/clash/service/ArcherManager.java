@@ -153,7 +153,7 @@ public class ArcherManager {
         // Deduct troops from village
         village.takeTroops(TroopType.ARCHER, archerCount);
 
-        AttackSession session = new AttackSession(player.getUniqueId(), registry, archerCount);
+        AttackSession session = new AttackSession(player.getUniqueId(), registry, archerCount, true);
         sessions.put(player.getUniqueId(), session);
         sessionNpcIds.put(player.getUniqueId(), new HashSet<>());
         testBaseManager.setActiveRegistry(player.getUniqueId(), registry);
@@ -189,7 +189,7 @@ public class ArcherManager {
 
         village.takeTroops(TroopType.ARCHER, archerCount);
 
-        AttackSession session = new AttackSession(player.getUniqueId(), registry, archerCount);
+        AttackSession session = new AttackSession(player.getUniqueId(), registry, archerCount, false);
         sessions.put(player.getUniqueId(), session);
         sessionNpcIds.put(player.getUniqueId(), new HashSet<>());
 
@@ -264,9 +264,12 @@ public class ArcherManager {
      */
     public void endSession(Player player) {
         UUID playerUuid = player.getUniqueId();
-        sessions.remove(playerUuid);
+        AttackSession session = sessions.remove(playerUuid);
         sessionNpcIds.remove(playerUuid);
-        if (testBaseManager != null) testBaseManager.setActiveRegistry(playerUuid, null);
+        // Only clear the registry if this session owns it (solo attack, not shared /clash attack)
+        if (session != null && session.ownsRegistry() && testBaseManager != null) {
+            testBaseManager.setActiveRegistry(playerUuid, null);
+        }
         if (healthBarManager != null) healthBarManager.clearSession(playerUuid);
         removeArcherHeadItem(player);
     }

@@ -27,7 +27,7 @@ public final class BalanceBook {
             case GOLD_MINE -> th == 0 ? 1 : (th == 1 ? 2 : 3);
             case ELIXIR_COLLECTOR -> th <= 1 ? 1 : 2;
             case GOLD_STORAGE, ELIXIR_STORAGE -> th >= 1 ? 1 : 0;
-            case BARRACKS, ARMY_CAMP, CANNON, ARCHER_TOWER, LABORATORY -> th >= 1 ? 1 : 0;
+            case BARRACKS, ARMY_CAMP, CANNON, ARCHER_TOWER, MORTAR, LABORATORY -> th >= 1 ? 1 : 0;
             case WALL -> th == 0 ? 8 : (th == 1 ? 20 : 40);
         };
     }
@@ -49,6 +49,7 @@ public final class BalanceBook {
             case ARMY_CAMP -> new BuildInfo(Currency.ELIXIR, 250L, 25);
             case CANNON -> new BuildInfo(Currency.GOLD, 250L, 20);
             case ARCHER_TOWER -> new BuildInfo(Currency.GOLD, 500L, 30);
+            case MORTAR -> new BuildInfo(Currency.GOLD, 400L, 25);
             case LABORATORY -> new BuildInfo(Currency.ELIXIR, 500L, 30);
             case WALL -> new BuildInfo(Currency.GOLD, 50L, 2);
             default -> new BuildInfo(Currency.GOLD, 100L, 10);

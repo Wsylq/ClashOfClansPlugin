@@ -19,6 +19,7 @@ public final class FootprintRegistry {
         REGISTRY.put(BuildingType.TOWNHALL,         new Footprint(4, 4));
         REGISTRY.put(BuildingType.CANNON,           new Footprint(3, 3));
         REGISTRY.put(BuildingType.ARCHER_TOWER,     new Footprint(3, 3));
+        REGISTRY.put(BuildingType.MORTAR,           new Footprint(3, 3));
         REGISTRY.put(BuildingType.BARRACKS,         new Footprint(3, 3));
         REGISTRY.put(BuildingType.ARMY_CAMP,        new Footprint(4, 4));
         REGISTRY.put(BuildingType.GOLD_MINE,        new Footprint(3, 3));

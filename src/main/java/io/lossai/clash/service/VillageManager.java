@@ -938,6 +938,14 @@ public final class VillageManager {
         }
     }
 
+    /**
+     * Exposes per-player slot overrides so MortarManager can resolve mortar positions.
+     * Returns null if no overrides exist for the given player.
+     */
+    public Map<BuildingType, List<int[]>> getPlayerSlotOverrides(java.util.UUID playerId) {
+        return playerSlotOverrides.get(playerId);
+    }
+
     public boolean isVillageWorld(World world) {
         return world != null && world.getName().startsWith("coc_");
     }
@@ -1385,6 +1393,7 @@ public final class VillageManager {
                 case LABORATORY -> placeLaboratory(world, x, z);
                 case CANNON -> placeCannon(world, x, z);
                 case ARCHER_TOWER -> placeArcherTower(world, x, z);
+                case MORTAR -> placeMortar(world, x, z);
                 case WALL -> placeWall(world, x, z, village.getWallSegmentLevel(i));
             }
         }
@@ -1465,6 +1474,14 @@ public final class VillageManager {
             world.getBlockAt(cx, y + i, cz).setType(Material.SPRUCE_LOG, false);
         }
         fill(world, cx - 1, y + 5, cz - 1, cx + 1, y + 5, cz + 1, Material.SPRUCE_PLANKS);
+    }
+
+    private void placeMortar(World world, int cx, int cz) {
+        int y = GROUND_Y + 1;
+        // 3×3 stone base
+        fill(world, cx - 1, y, cz - 1, cx + 1, y, cz + 1, Material.STONE_BRICKS);
+        // Barrel: cauldron on top as mortar bowl
+        world.getBlockAt(cx, y + 1, cz).setType(Material.CAULDRON, false);
     }
 
     private void placeWall(World world, int cx, int cz, int level) {
@@ -2095,6 +2112,7 @@ public final class VillageManager {
         slots.put(BuildingType.LABORATORY, List.of(new int[]{0, 26}));
         slots.put(BuildingType.CANNON, List.of(new int[]{-26, -8}, new int[]{26, -8}));
         slots.put(BuildingType.ARCHER_TOWER, List.of(new int[]{-30, 0}, new int[]{30, 0}));
+        slots.put(BuildingType.MORTAR, List.of(new int[]{0, -26}));
         return Collections.unmodifiableMap(slots);
     }
 
@@ -2139,6 +2157,7 @@ public final class VillageManager {
             drawBuiltBuildings(canvas, village, BuildingType.ELIXIR_COLLECTOR, java.awt.Color.decode("#D980FA"));
             drawBuiltBuildings(canvas, village, BuildingType.CANNON, java.awt.Color.decode("#7F8C8D"));
             drawBuiltBuildings(canvas, village, BuildingType.ARCHER_TOWER, java.awt.Color.decode("#2E86C1"));
+            drawBuiltBuildings(canvas, village, BuildingType.MORTAR, java.awt.Color.decode("#636E72"));
             drawBuiltBuildings(canvas, village, BuildingType.WALL, java.awt.Color.decode("#4B6584"));
             canvas.drawText(4, 4, MinecraftFont.Font, "TH" + village.getTownHallLevel());
             canvas.drawText(4, 14, MinecraftFont.Font, "W:" + village.getBuildingCount(BuildingType.WALL));

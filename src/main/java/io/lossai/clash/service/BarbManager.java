@@ -118,7 +118,7 @@ public class BarbManager {
         // Deduct troops from village
         village.takeTroops(TroopType.BARBARIAN, barbCount);
 
-        AttackSession session = new AttackSession(player.getUniqueId(), registry, barbCount);
+        AttackSession session = new AttackSession(player.getUniqueId(), registry, barbCount, true);
         sessions.put(player.getUniqueId(), session);
         sessionNpcIds.put(player.getUniqueId(), new java.util.HashSet<>());
         testBaseManager.setActiveRegistry(player.getUniqueId(), registry);
@@ -154,7 +154,7 @@ public class BarbManager {
 
         village.takeTroops(TroopType.BARBARIAN, barbCount);
 
-        AttackSession session = new AttackSession(player.getUniqueId(), registry, barbCount);
+        AttackSession session = new AttackSession(player.getUniqueId(), registry, barbCount, false);
         sessions.put(player.getUniqueId(), session);
         sessionNpcIds.put(player.getUniqueId(), new java.util.HashSet<>());
 
@@ -209,9 +209,12 @@ public class BarbManager {
      */
     public void endSession(Player player) {
         UUID playerUuid = player.getUniqueId();
-        sessions.remove(playerUuid);
+        AttackSession session = sessions.remove(playerUuid);
         sessionNpcIds.remove(playerUuid);
-        if (testBaseManager != null) testBaseManager.setActiveRegistry(playerUuid, null);
+        // Only clear the registry if this session owns it (solo attack, not shared /clash attack)
+        if (session != null && session.ownsRegistry() && testBaseManager != null) {
+            testBaseManager.setActiveRegistry(playerUuid, null);
+        }
         if (healthBarManager != null) healthBarManager.clearSession(playerUuid);
         removeBarbHeadItem(player);
         player.sendMessage(ChatColor.GOLD + "Attack session ended.");

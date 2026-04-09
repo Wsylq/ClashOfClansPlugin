@@ -34,6 +34,7 @@ public final class TestBaseManager {
         m.put(BuildingType.TOWNHALL,     new int[]{0,  0});
         m.put(BuildingType.CANNON,       new int[]{10, 5});
         m.put(BuildingType.ARCHER_TOWER, new int[]{-10, 5});
+        m.put(BuildingType.MORTAR,       new int[]{0, 10});
         m.put(BuildingType.ARMY_CAMP,    new int[]{0, -12});
         BASE_POSITIONS = Collections.unmodifiableMap(m);
     }
@@ -58,8 +59,15 @@ public final class TestBaseManager {
 
     private static final double CANNON_DAMAGE  = 6.0;
     private static final double ARCHER_DAMAGE  = 3.0;
+    private static final double MORTAR_DAMAGE  = 40.0;
     private static final double CANNON_RANGE   = 16.0;
     private static final double ARCHER_RANGE   = 12.0;
+    private static final double MORTAR_MIN_RANGE = 4.0;
+    private static final double MORTAR_MAX_RANGE = 11.0;
+    private static final double MORTAR_SPLASH  = 1.5;
+    /** Mortar fires every N ticks of tickDefense (each tick = 20 server ticks = 1s). 5 = 5 seconds. */
+    private int mortarCooldownCounter = 0;
+    private static final int MORTAR_COOLDOWN_TICKS = 5;
 
     public TestBaseManager(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -110,6 +118,7 @@ public final class TestBaseManager {
         placeBuilding(world, BuildingType.TOWNHALL,     BASE_POSITIONS.get(BuildingType.TOWNHALL));
         placeBuilding(world, BuildingType.CANNON,       BASE_POSITIONS.get(BuildingType.CANNON));
         placeBuilding(world, BuildingType.ARCHER_TOWER, BASE_POSITIONS.get(BuildingType.ARCHER_TOWER));
+        placeBuilding(world, BuildingType.MORTAR,       BASE_POSITIONS.get(BuildingType.MORTAR));
         placeBuilding(world, BuildingType.ARMY_CAMP,    BASE_POSITIONS.get(BuildingType.ARMY_CAMP));
     }
 
@@ -140,6 +149,15 @@ public final class TestBaseManager {
                 world.getBlockAt(x, GROUND_Y + 1, z).setType(Material.COBBLESTONE, false);
                 world.getBlockAt(x, GROUND_Y + 2, z).setType(Material.COBBLESTONE, false);
                 world.getBlockAt(x, GROUND_Y + 3, z).setType(Material.STONE_BRICK_SLAB, false);
+            }
+            case MORTAR -> {
+                // 3×3 stone brick base + cauldron on top as mortar bowl
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        world.getBlockAt(x + dx, GROUND_Y, z + dz).setType(Material.STONE_BRICKS, false);
+                    }
+                }
+                world.getBlockAt(x, GROUND_Y + 1, z).setType(Material.CAULDRON, false);
             }
             case ARMY_CAMP -> {
                 for (int dx = -1; dx <= 1; dx++) {
@@ -187,9 +205,16 @@ public final class TestBaseManager {
 
         boolean cannonAlive = registry.isBuildingAlive(BuildingType.CANNON);
         boolean archerAlive = registry.isBuildingAlive(BuildingType.ARCHER_TOWER);
+        boolean mortarAlive = registry.isBuildingAlive(BuildingType.MORTAR);
 
         if (cannonAlive)  shootDefense(BuildingType.CANNON,       BASE_POSITIONS.get(BuildingType.CANNON),       CANNON_RANGE, CANNON_DAMAGE, targets);
         if (archerAlive)  shootDefense(BuildingType.ARCHER_TOWER, BASE_POSITIONS.get(BuildingType.ARCHER_TOWER), ARCHER_RANGE, ARCHER_DAMAGE, targets);
+        if (mortarAlive) {
+            if (++mortarCooldownCounter >= MORTAR_COOLDOWN_TICKS) {
+                mortarCooldownCounter = 0;
+                shootMortar(BASE_POSITIONS.get(BuildingType.MORTAR), targets);
+            }
+        }
     }
 
     private void shootDefense(BuildingType type, int[] pos, double range, double damage, List<Entity> targets) {
@@ -216,8 +241,12 @@ public final class TestBaseManager {
         Vector dir = targetLoc.toVector().subtract(origin.toVector()).normalize();
 
         Arrow arrow = testWorld.spawnArrow(origin, dir, 1.6f, 1.0f);
-        arrow.setDamage(damage);
+        arrow.setDamage(0); // visual only — damage applied directly below
         arrow.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
+        // Remove arrow quickly so it can't hit other NPCs (friendly fire)
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            if (arrow.isValid()) arrow.remove();
+        }, 8L);
 
         // Play sound at the building
         testWorld.playSound(origin,
@@ -236,6 +265,45 @@ public final class TestBaseManager {
                 }
             }
         }, 5L);
+    }
+
+    private void shootMortar(int[] pos, List<Entity> targets) {
+        if (pos == null || testWorld == null) return;
+
+        Location origin = new Location(testWorld, pos[0] + 0.5, GROUND_Y + 2.0, pos[1] + 0.5);
+
+        // Find nearest NPC in [MORTAR_MIN_RANGE, MORTAR_MAX_RANGE] — skip blind spot
+        Entity nearest = null;
+        double nearestDist = Double.MAX_VALUE;
+        for (Entity e : targets) {
+            double dx = e.getLocation().getX() - origin.getX();
+            double dz = e.getLocation().getZ() - origin.getZ();
+            double dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist < MORTAR_MIN_RANGE || dist > MORTAR_MAX_RANGE) continue;
+            if (dist < nearestDist) { nearestDist = dist; nearest = e; }
+        }
+        if (nearest == null) return;
+
+        Location targetLoc = nearest.getLocation().clone().add(0, 0.5, 0);
+        Vector dir = targetLoc.toVector().subtract(origin.toVector()).normalize();
+
+        Snowball shell = testWorld.spawn(origin.clone().add(0, 1.5, 0), Snowball.class);
+        shell.setVelocity(dir.multiply(1.2));
+        testWorld.playSound(origin, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 0.5f);
+
+        final Location landLoc = targetLoc.clone();
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            shell.remove();
+            if (testWorld == null) return;
+            testWorld.spawnParticle(Particle.EXPLOSION_EMITTER, landLoc.clone().add(0, 0.5, 0), 1, 0, 0, 0, 0);
+            testWorld.playSound(landLoc, Sound.ENTITY_GENERIC_EXPLODE, 1.0f, 1.2f);
+            // AOE splash — damage all NPCs within splash radius
+            for (Entity e : testWorld.getNearbyEntities(landLoc, MORTAR_SPLASH, MORTAR_SPLASH, MORTAR_SPLASH)) {
+                if (e instanceof org.bukkit.entity.LivingEntity living) {
+                    living.damage(MORTAR_DAMAGE);
+                }
+            }
+        }, 15L);
     }
 
     public static Map<BuildingType, int[]> getBasePositions() {
